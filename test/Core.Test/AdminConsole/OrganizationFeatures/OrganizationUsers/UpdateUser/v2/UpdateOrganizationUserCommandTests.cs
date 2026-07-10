@@ -13,6 +13,7 @@ using Bit.Core.Exceptions;
 using Bit.Core.Models.Data;
 using Bit.Core.Models.Data.Organizations;
 using Bit.Core.OrganizationFeatures.OrganizationSubscriptions.Interface;
+using Bit.Core.Platform.Push;
 using Bit.Core.Repositories;
 using Bit.Core.Services;
 using Bit.Core.Settings;
@@ -171,8 +172,14 @@ public class UpdateOrganizationUserCommandTests
         [OrganizationUser(OrganizationUserStatusType.Confirmed, OrganizationUserType.User)] OrganizationUser organizationUser)
     {
         organizationUser.AccessSecretsManager = false;
-        var request = Setup(sutProvider, organization, organizationUser, targetAccessSecretsManager: true);
+        organizationUser.UserId = Guid.NewGuid();
+        var userToUpdate = new User { Id = organizationUser.UserId!.Value, Email = "old@claimed.example.com" };
+        var request = Setup(sutProvider, organization, organizationUser, targetAccessSecretsManager: true,
+            newEmail: "new@claimed.example.com");
 
+        sutProvider.GetDependency<IUserRepository>()
+            .GetByIdAsync(organizationUser.UserId!.Value)
+            .Returns(userToUpdate);
         sutProvider.GetDependency<IGlobalSettings>().SelfHosted.Returns(true);
         sutProvider.GetDependency<ICountNewSmSeatsRequiredQuery>()
             .CountNewSmSeatsRequiredAsync(organization.Id, 1)
@@ -193,6 +200,11 @@ public class UpdateOrganizationUserCommandTests
         await sutProvider.GetDependency<IEventService>()
             .DidNotReceiveWithAnyArgs()
             .LogOrganizationUserEventAsync(default(OrganizationUser), default);
+
+        // Autoscale runs before the email change, so a failed autoscale must not have altered the member's email.
+        await sutProvider.GetDependency<IChangeEmailCommand>()
+            .DidNotReceiveWithAnyArgs()
+            .ChangeEmailAsync(default, default);
     }
 
     [Theory]
@@ -331,6 +343,9 @@ public class UpdateOrganizationUserCommandTests
         await sutProvider.GetDependency<IChangeEmailCommand>()
             .Received(1)
             .ChangeEmailAsync(userToUpdate, "new@claimed.example.com");
+        await sutProvider.GetDependency<IPushNotificationService>()
+            .Received(1)
+            .PushSyncSettingsAsync(userToUpdate.Id);
         await sutProvider.GetDependency<IOrganizationUserRepository>()
             .Received(1)
             .ReplaceAsync(organizationUser, Arg.Any<IEnumerable<CollectionAccessSelection>>());
@@ -354,6 +369,9 @@ public class UpdateOrganizationUserCommandTests
         await sutProvider.GetDependency<IChangeEmailCommand>()
             .DidNotReceiveWithAnyArgs()
             .ChangeEmailAsync(default, default);
+        await sutProvider.GetDependency<IPushNotificationService>()
+            .DidNotReceiveWithAnyArgs()
+            .PushSyncSettingsAsync(default);
     }
 
     [Theory]
@@ -377,6 +395,9 @@ public class UpdateOrganizationUserCommandTests
         await sutProvider.GetDependency<IChangeEmailCommand>()
             .DidNotReceiveWithAnyArgs()
             .ChangeEmailAsync(default, default);
+        await sutProvider.GetDependency<IPushNotificationService>()
+            .DidNotReceiveWithAnyArgs()
+            .PushSyncSettingsAsync(default);
     }
 
     [Theory]
@@ -414,6 +435,9 @@ public class UpdateOrganizationUserCommandTests
         await sutProvider.GetDependency<IEventService>()
             .DidNotReceiveWithAnyArgs()
             .LogOrganizationUserEventAsync(default(OrganizationUser), default);
+        await sutProvider.GetDependency<IPushNotificationService>()
+            .DidNotReceiveWithAnyArgs()
+            .PushSyncSettingsAsync(default);
     }
 
     private static UpdateOrganizationUserRequest Setup(
