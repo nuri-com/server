@@ -1,8 +1,11 @@
-﻿using Bit.Core.AdminConsole.OrganizationFeatures.OrganizationUsers.Interfaces;
+﻿using Bit.Core.AdminConsole.OrganizationFeatures.OrganizationDomains;
+using Bit.Core.AdminConsole.OrganizationFeatures.OrganizationUsers.Interfaces;
 using Bit.Core.AdminConsole.OrganizationFeatures.Policies;
 using Bit.Core.AdminConsole.OrganizationFeatures.Policies.PolicyRequirements;
 using Bit.Core.AdminConsole.Utilities.v2.Results;
+using Bit.Core.Auth.UserFeatures.UserEmail;
 using Bit.Core.Billing.Pricing;
+using Bit.Core.Entities;
 using Bit.Core.Enums;
 using Bit.Core.Exceptions;
 using Bit.Core.Models.Business;
@@ -26,11 +29,15 @@ public class UpdateOrganizationUserCommand(
     IGlobalSettings globalSettings,
     ICollectionRepository collectionRepository,
     IPolicyRequirementQuery policyRequirementQuery,
+    IUserRepository userRepository,
+    IChangeEmailCommand changeEmailCommand,
     TimeProvider timeProvider)
     : IUpdateOrganizationUserCommand
 {
     public async Task<CommandResult> UpdateUserAsync(UpdateOrganizationUserRequest request)
     {
+        request = await LoadUserForEmailChangeAsync(request);
+
         var validationResult = await validator.ValidateAsync(request);
 
         if (validationResult.IsError)
@@ -40,6 +47,7 @@ public class UpdateOrganizationUserCommand(
 
         var wasDemotedFromPrivilegedRole = IsDemotingFromPrivilegedRole(request);
         var enablingSecretsManager = IsEnablingSecretsManager(request);
+        var isEmailChanging = IsEmailChanging(request);
 
         var organizationUser = request.OrganizationUserToUpdate;
         organizationUser.Type = request.NewType;
@@ -49,6 +57,15 @@ public class UpdateOrganizationUserCommand(
         if (enablingSecretsManager)
         {
             var commandError = await TryEnablingSecretsManagerAsync(request);
+            if (commandError is not null)
+            {
+                return commandError;
+            }
+        }
+
+        if (isEmailChanging)
+        {
+            var commandError = await TryApplyEmailChangeAsync(request);
             if (commandError is not null)
             {
                 return commandError;
@@ -75,6 +92,34 @@ public class UpdateOrganizationUserCommand(
 
         return new None();
     }
+
+    private async Task<CommandError?> TryApplyEmailChangeAsync(UpdateOrganizationUserRequest request)
+    {
+        try
+        {
+            await changeEmailCommand.ChangeEmailAsync(request.UserToUpdate!, request.NewEmail!);
+            return null;
+        }
+        catch (BadRequestException ex)
+        {
+            return MapEmailChangeError(ex);
+        }
+    }
+
+    // Map the known messages thrown by IChangeEmailCommand / IOrganizationDomainAllowEmailChangeQuery to typed
+    // errors; invalid-format and unverified-domain are already handled upstream, and unknown messages fall back.
+    private static CommandError MapEmailChangeError(BadRequestException ex) => ex.Message switch
+    {
+        ChangeEmailCommand.EmailAlreadyInUseError => new EmailAlreadyInUseError(),
+        OrganizationDomainAllowEmailChangeQuery.EmailClaimedByOrganizationError => new EmailClaimedByAnotherOrganizationError(),
+        OrganizationDomainAllowEmailChangeQuery.EmailNotOnVerifiedDomainError => new NewEmailDomainNotClaimedError(),
+        _ => new EmailChangeFailedError(ex.Message)
+    };
+
+    private static bool IsEmailChanging(UpdateOrganizationUserRequest request) =>
+        !string.IsNullOrWhiteSpace(request.NewEmail)
+        && request.UserToUpdate is not null
+        && !string.Equals(request.UserToUpdate.Email, request.NewEmail, StringComparison.InvariantCultureIgnoreCase);
 
     private static bool IsEnablingSecretsManager(UpdateOrganizationUserRequest request) =>
         !request.OrganizationUserToUpdate.AccessSecretsManager && request.NewAccessSecretsManager;
@@ -110,6 +155,17 @@ public class UpdateOrganizationUserCommand(
         }
 
         return null;
+    }
+
+    private async Task<UpdateOrganizationUserRequest> LoadUserForEmailChangeAsync(UpdateOrganizationUserRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.NewEmail) || !request.OrganizationUserToUpdate.UserId.HasValue)
+        {
+            return request;
+        }
+
+        var userToUpdate = await userRepository.GetByIdAsync(request.OrganizationUserToUpdate.UserId.Value);
+        return request with { UserToUpdate = userToUpdate };
     }
 
     private async Task<bool> ShouldCreateDefaultCollectionAsync(UpdateOrganizationUserRequest request,

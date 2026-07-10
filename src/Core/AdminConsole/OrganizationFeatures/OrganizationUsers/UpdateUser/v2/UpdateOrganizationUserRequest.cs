@@ -16,8 +16,10 @@ namespace Bit.Core.AdminConsole.OrganizationFeatures.OrganizationUsers.UpdateUse
 /// <param name="NewPermissions">The requested custom permissions (used when <paramref name="NewType"/> is Custom).</param>
 /// <param name="NewCollections">The updated collection access; null removes all collection access.</param>
 /// <param name="NewGroups">The updated group access; null leaves groups unchanged.</param>
-/// <param name="PerformedByOrganizationUser">The actor's own membership; null when the actor is not an organization member (e.g. a provider).</param>
+/// <param name="NewEmail">The requested new email address; null or blank leaves the member's email unchanged.</param>
 /// <param name="DefaultUserCollectionName">Default collection name used when applicable</param>
+/// <param name="PerformedByOrganizationUser">The actor's own membership; null when the actor is not an organization member (e.g. a provider).</param>
+/// <param name="UserToUpdate">The member's loaded account; populated by the command before validation, null when no email change is requested or the member has no account.</param>
 public record UpdateOrganizationUserRequest(
     OrganizationUser OrganizationUserToUpdate,
     Organization Organization,
@@ -29,6 +31,8 @@ public record UpdateOrganizationUserRequest(
     bool NewAccessSecretsManager,
     List<CollectionAccessSelection>? NewCollections,
     IEnumerable<Guid>? NewGroups,
+    string? NewEmail,
+    string? DefaultUserCollectionName,
     IActingUser PerformedBy,
     OrganizationUser? PerformedByOrganizationUser,
-    string? DefaultUserCollectionName);
+    User? UserToUpdate = null);
