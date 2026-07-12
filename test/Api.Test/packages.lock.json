@@ -64,19 +64,19 @@
       },
       "AspNetCore.HealthChecks.SqlServer": {
         "type": "Transitive",
-        "resolved": "8.0.2",
-        "contentHash": "sTcVVq7/zhfUrSTs0WAktvPdpU1He/sj14gRTogq4eFhn0oImolxNNhJczkYMgFF92RMMW+O+rlcFO7HVOpfiQ==",
+        "resolved": "9.0.0",
+        "contentHash": "UxCf65iCF2nU1u7AcB320abjL4CRg5swCgJECY6mKk1j5lrGMfVtskWwriGs1T29pYdRig9Vra3SPnP+4G82pA==",
         "dependencies": {
-          "Microsoft.Data.SqlClient": "5.2.0",
-          "Microsoft.Extensions.Diagnostics.HealthChecks": "8.0.0"
+          "Microsoft.Data.SqlClient": "5.2.2",
+          "Microsoft.Extensions.Diagnostics.HealthChecks": "8.0.11"
         }
       },
       "AspNetCore.HealthChecks.Uris": {
         "type": "Transitive",
-        "resolved": "8.0.1",
-        "contentHash": "A1ahRx4pdXjrSGlGFLoyoXOV4Lfp5sfs+OIGfvi14RwecIAac4xs6cP0Q8tw/rv4Ng+KAaYpzD4qhxXVwUcIyA==",
+        "resolved": "9.0.0",
+        "contentHash": "XYdNlA437KeF8p9qOpZFyNqAN+c0FXt/JjTvzH/Qans0q0O3pPE8KPnn39ucQQjR/Roum1vLTP3kXiUs8VHyuA==",
         "dependencies": {
-          "Microsoft.Extensions.Diagnostics.HealthChecks": "8.0.0",
+          "Microsoft.Extensions.Diagnostics.HealthChecks": "8.0.11",
           "Microsoft.Extensions.Http": "8.0.0"
         }
       },
@@ -905,19 +905,19 @@
       },
       "Microsoft.Extensions.Diagnostics.HealthChecks": {
         "type": "Transitive",
-        "resolved": "8.0.0",
-        "contentHash": "P9SoBuVZhJPpALZmSq72aQEb9ryP67EdquaCZGXGrrcASTNHYdrUhnpgSwIipgM5oVC+dKpRXg5zxobmF9xr5g==",
+        "resolved": "8.0.11",
+        "contentHash": "zLgN22Zp9pk8RHlwssRTexw4+a6wqOnKWN+VejdPn5Yhjql4XiBhkFo35Nu8mmqHIk/UEmmCnMGLWq75aFfkOw==",
         "dependencies": {
-          "Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions": "8.0.0",
-          "Microsoft.Extensions.Hosting.Abstractions": "8.0.0",
-          "Microsoft.Extensions.Logging.Abstractions": "8.0.0",
-          "Microsoft.Extensions.Options": "8.0.0"
+          "Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions": "8.0.11",
+          "Microsoft.Extensions.Hosting.Abstractions": "8.0.1",
+          "Microsoft.Extensions.Logging.Abstractions": "8.0.2",
+          "Microsoft.Extensions.Options": "8.0.2"
         }
       },
       "Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions": {
         "type": "Transitive",
-        "resolved": "8.0.0",
-        "contentHash": "AT2qqos3IgI09ok36Qag9T8bb6kHJ3uT9Q5ki6CySybFsK6/9JbvQAgAHf1pVEjST0/N4JaFaCbm40R5edffwg=="
+        "resolved": "8.0.11",
+        "contentHash": "So3JUdRxozRjvQ3cxU6F3nI/i4emDnjane6yMYcJhvTTTu29ltlIdoXjkFGRceIWz8yKvuEpzXItZ0x5GvN2nQ=="
       },
       "Microsoft.Extensions.Diagnostics.Testing": {
         "type": "Transitive",
@@ -1699,14 +1699,13 @@
       "api": {
         "type": "Project",
         "dependencies": {
-          "AspNetCore.HealthChecks.SqlServer": "[8.0.2, 8.0.2]",
-          "AspNetCore.HealthChecks.Uris": "[8.0.1, 8.0.1]",
+          "AspNetCore.HealthChecks.SqlServer": "[9.0.0, 9.0.0]",
+          "AspNetCore.HealthChecks.Uris": "[9.0.0, 9.0.0]",
           "Azure.Messaging.EventGrid": "[5.0.0, 5.0.0]",
-          "Commercial.Core": "[2026.6.1, )",
-          "Commercial.Infrastructure.EntityFramework": "[2026.6.1, )",
-          "Pam": "[2026.6.1, )",
-          "Core": "[2026.6.1, )",
-          "HttpExtensions": "[2026.6.1, )",
+          "Commercial.Core": "[2026.6.2, )",
+          "Commercial.Infrastructure.EntityFramework": "[2026.6.2, )",
+          "Core": "[2026.6.2, )",
+          "HttpExtensions": "[2026.6.2, )",
           "OpenTelemetry.Exporter.OpenTelemetryProtocol": "[1.15.3, )",
           "OpenTelemetry.Extensions.Hosting": "[1.15.3, )",
           "OpenTelemetry.Instrumentation.AspNetCore": "[1.15.0, )",
@@ -1714,14 +1713,15 @@
           "OpenTelemetry.Instrumentation.Http": "[1.15.0, )",
           "OpenTelemetry.Instrumentation.Runtime": "[1.15.0, )",
           "OpenTelemetry.Instrumentation.SqlClient": "[1.12.0-beta.3, )",
-          "SharedWeb": "[2026.6.1, )",
+          "Pam": "[2026.6.2, )",
+          "SharedWeb": "[2026.6.2, )",
           "Swashbuckle.AspNetCore": "[10.1.7, 10.1.7]"
         }
       },
       "commercial.core": {
         "type": "Project",
         "dependencies": {
-          "Core": "[2026.6.1, )",
+          "Core": "[2026.6.2, )",
           "CsvHelper": "[33.1.0, 33.1.0]"
         }
       },
@@ -1729,15 +1729,8 @@
         "type": "Project",
         "dependencies": {
           "AutoMapper": "[14.0.0, 14.0.0]",
-          "Core": "[2026.6.1, )",
-          "Infrastructure.EntityFramework": "[2026.6.1, )"
-        }
-      },
-      "pam": {
-        "type": "Project",
-        "dependencies": {
-          "Core": "[2026.6.1, )",
-          "HttpExtensions": "[2026.6.1, )"
+          "Core": "[2026.6.2, )",
+          "Infrastructure.EntityFramework": "[2026.6.2, )"
         }
       },
       "common": {
@@ -1745,7 +1738,7 @@
         "dependencies": {
           "AutoFixture.AutoNSubstitute": "[4.18.1, )",
           "AutoFixture.Xunit2": "[4.18.1, )",
-          "Core": "[2026.6.1, )",
+          "Core": "[2026.6.2, )",
           "Kralizek.AutoFixture.Extensions.MockHttp": "[2.2.1, 2.2.1]",
           "Microsoft.Extensions.TimeProvider.Testing": "[10.6.0, 10.6.0]",
           "Microsoft.NET.Test.Sdk": "[18.0.1, )",
@@ -1811,8 +1804,8 @@
         "dependencies": {
           "AutoFixture.AutoNSubstitute": "[4.18.1, )",
           "AutoFixture.Xunit2": "[4.18.1, )",
-          "Common": "[2026.6.1, )",
-          "Core": "[2026.6.1, )",
+          "Common": "[2026.6.2, )",
+          "Core": "[2026.6.2, )",
           "Kralizek.AutoFixture.Extensions.MockHttp": "[2.2.1, 2.2.1]",
           "Microsoft.Extensions.Diagnostics.Testing": "[10.6.0, 10.6.0]",
           "Microsoft.NET.Test.Sdk": "[18.0.1, )",
@@ -1826,7 +1819,7 @@
       "infrastructure.dapper": {
         "type": "Project",
         "dependencies": {
-          "Core": "[2026.6.1, )",
+          "Core": "[2026.6.2, )",
           "Dapper": "[2.1.66, 2.1.66]"
         }
       },
@@ -1834,7 +1827,7 @@
         "type": "Project",
         "dependencies": {
           "AutoMapper": "[14.0.0, 14.0.0]",
-          "Core": "[2026.6.1, )",
+          "Core": "[2026.6.2, )",
           "Microsoft.EntityFrameworkCore.Relational": "[8.0.8, 8.0.8]",
           "Microsoft.EntityFrameworkCore.SqlServer": "[8.0.8, 8.0.8]",
           "Microsoft.EntityFrameworkCore.Sqlite": "[8.0.8, 8.0.8]",
@@ -1844,12 +1837,19 @@
           "linq2db.EntityFrameworkCore": "[8.1.0, 8.1.0]"
         }
       },
+      "pam": {
+        "type": "Project",
+        "dependencies": {
+          "Core": "[2026.6.2, )",
+          "HttpExtensions": "[2026.6.2, )"
+        }
+      },
       "sharedweb": {
         "type": "Project",
         "dependencies": {
-          "Core": "[2026.6.1, )",
-          "Infrastructure.Dapper": "[2026.6.1, )",
-          "Infrastructure.EntityFramework": "[2026.6.1, )",
+          "Core": "[2026.6.2, )",
+          "Infrastructure.Dapper": "[2026.6.2, )",
+          "Infrastructure.EntityFramework": "[2026.6.2, )",
           "Microsoft.Bot.Builder.Integration.AspNet.Core": "[4.23.0, 4.23.0]",
           "Swashbuckle.AspNetCore.SwaggerGen": "[10.1.7, 10.1.7]"
         }
