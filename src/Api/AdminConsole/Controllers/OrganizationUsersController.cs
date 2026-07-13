@@ -452,6 +452,7 @@ public class OrganizationUsersController : BaseAdminConsoleController
                 collectionsToSave,
                 groupsToSave,
                 model.Email,
+                model.Name,
                 model.DefaultUserCollectionName,
                 new StandardUser(userId, await _currentContext.OrganizationOwner(organization.Id)),
                 savingOrganizationUser);
