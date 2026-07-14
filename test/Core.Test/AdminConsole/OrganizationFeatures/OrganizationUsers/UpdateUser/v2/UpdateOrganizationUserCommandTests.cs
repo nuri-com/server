@@ -10,6 +10,7 @@ using Bit.Core.Billing.Enums;
 using Bit.Core.Entities;
 using Bit.Core.Enums;
 using Bit.Core.Exceptions;
+using Bit.Core.Models.Business;
 using Bit.Core.Models.Data;
 using Bit.Core.Models.Data.Organizations;
 using Bit.Core.OrganizationFeatures.OrganizationSubscriptions.Interface;
@@ -46,13 +47,13 @@ public class UpdateOrganizationUserCommandTests
 
         await sutProvider.GetDependency<IOrganizationUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .ReplaceAsync(default, default(IEnumerable<CollectionAccessSelection>));
+            .ReplaceAsync(Arg.Any<OrganizationUser>(), Arg.Any<IEnumerable<CollectionAccessSelection>>());
         await sutProvider.GetDependency<IOrganizationUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .UpdateGroupsAsync(default, default, default);
+            .UpdateGroupsAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<Guid>>(), Arg.Any<DateTime>());
         await sutProvider.GetDependency<IEventService>()
             .DidNotReceiveWithAnyArgs()
-            .LogOrganizationUserEventAsync(default(OrganizationUser), default);
+            .LogOrganizationUserEventAsync(Arg.Any<OrganizationUser>(), Arg.Any<EventType>(), Arg.Any<DateTime>());
     }
 
     [Theory]
@@ -98,7 +99,7 @@ public class UpdateOrganizationUserCommandTests
             .ReplaceAsync(organizationUser, Arg.Any<IEnumerable<CollectionAccessSelection>>());
         await sutProvider.GetDependency<IOrganizationUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .UpdateGroupsAsync(default, default, default);
+            .UpdateGroupsAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<Guid>>(), Arg.Any<DateTime>());
     }
 
     [Theory]
@@ -142,7 +143,7 @@ public class UpdateOrganizationUserCommandTests
             .CountNewSmSeatsRequiredAsync(organization.Id, 1);
         await sutProvider.GetDependency<IUpdateSecretsManagerSubscriptionCommand>()
             .DidNotReceiveWithAnyArgs()
-            .UpdateSubscriptionAsync(default);
+            .UpdateSubscriptionAsync(Arg.Any<SecretsManagerSubscriptionUpdate>());
     }
 
     [Theory]
@@ -161,7 +162,7 @@ public class UpdateOrganizationUserCommandTests
 
         await sutProvider.GetDependency<ICountNewSmSeatsRequiredQuery>()
             .DidNotReceiveWithAnyArgs()
-            .CountNewSmSeatsRequiredAsync(default, default);
+            .CountNewSmSeatsRequiredAsync(Arg.Any<Guid>(), Arg.Any<int>());
     }
 
     [Theory]
@@ -193,18 +194,18 @@ public class UpdateOrganizationUserCommandTests
         // A self-hosted instance must never attempt a subscription update, and nothing should be persisted.
         await sutProvider.GetDependency<IUpdateSecretsManagerSubscriptionCommand>()
             .DidNotReceiveWithAnyArgs()
-            .UpdateSubscriptionAsync(default);
+            .UpdateSubscriptionAsync(Arg.Any<SecretsManagerSubscriptionUpdate>());
         await sutProvider.GetDependency<IOrganizationUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .ReplaceAsync(default, default(IEnumerable<CollectionAccessSelection>));
+            .ReplaceAsync(Arg.Any<OrganizationUser>(), Arg.Any<IEnumerable<CollectionAccessSelection>>());
         await sutProvider.GetDependency<IEventService>()
             .DidNotReceiveWithAnyArgs()
-            .LogOrganizationUserEventAsync(default(OrganizationUser), default);
+            .LogOrganizationUserEventAsync(Arg.Any<OrganizationUser>(), Arg.Any<EventType>());
 
         // Autoscale runs before the email change, so a failed autoscale must not have altered the member's email.
         await sutProvider.GetDependency<IChangeEmailCommand>()
             .DidNotReceiveWithAnyArgs()
-            .ChangeEmailAsync(default, default);
+            .ChangeEmailAsync(Arg.Any<User>(), Arg.Any<string>());
     }
 
     [Theory]
@@ -251,7 +252,7 @@ public class UpdateOrganizationUserCommandTests
 
         Assert.True(result.IsSuccess);
         await sutProvider.GetDependency<ICollectionRepository>().DidNotReceiveWithAnyArgs()
-            .CreateDefaultCollectionsAsync(default, default, default);
+            .CreateDefaultCollectionsAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<Guid>>(), Arg.Any<string>());
     }
 
     [Theory]
@@ -274,7 +275,7 @@ public class UpdateOrganizationUserCommandTests
 
         Assert.True(result.IsSuccess);
         await sutProvider.GetDependency<ICollectionRepository>().DidNotReceiveWithAnyArgs()
-            .CreateDefaultCollectionsAsync(default, default, default);
+            .CreateDefaultCollectionsAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<Guid>>(), Arg.Any<string>());
     }
 
     [Theory]
@@ -296,7 +297,7 @@ public class UpdateOrganizationUserCommandTests
 
         Assert.True(result.IsSuccess);
         await sutProvider.GetDependency<ICollectionRepository>().DidNotReceiveWithAnyArgs()
-            .CreateDefaultCollectionsAsync(default, default, default);
+            .CreateDefaultCollectionsAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<Guid>>(), Arg.Any<string>());
     }
 
     [Theory]
@@ -316,7 +317,7 @@ public class UpdateOrganizationUserCommandTests
 
         Assert.True(result.IsSuccess);
         await sutProvider.GetDependency<ICollectionRepository>().DidNotReceiveWithAnyArgs()
-            .CreateDefaultCollectionsAsync(default, default, default);
+            .CreateDefaultCollectionsAsync(Arg.Any<Guid>(), Arg.Any<IEnumerable<Guid>>(), Arg.Any<string>());
     }
 
     [Theory]
@@ -365,13 +366,13 @@ public class UpdateOrganizationUserCommandTests
         Assert.True(result.IsSuccess);
         await sutProvider.GetDependency<IUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .GetByIdAsync(default);
+            .GetByIdAsync(Arg.Any<Guid>());
         await sutProvider.GetDependency<IChangeEmailCommand>()
             .DidNotReceiveWithAnyArgs()
-            .ChangeEmailAsync(default, default);
+            .ChangeEmailAsync(Arg.Any<User>(), Arg.Any<string>());
         await sutProvider.GetDependency<IPushNotificationService>()
             .DidNotReceiveWithAnyArgs()
-            .PushSyncSettingsAsync(default);
+            .PushSyncSettingsAsync(Arg.Any<Guid>());
     }
 
     [Theory]
@@ -394,10 +395,10 @@ public class UpdateOrganizationUserCommandTests
         Assert.True(result.IsSuccess);
         await sutProvider.GetDependency<IChangeEmailCommand>()
             .DidNotReceiveWithAnyArgs()
-            .ChangeEmailAsync(default, default);
+            .ChangeEmailAsync(Arg.Any<User>(), Arg.Any<string>());
         await sutProvider.GetDependency<IPushNotificationService>()
             .DidNotReceiveWithAnyArgs()
-            .PushSyncSettingsAsync(default);
+            .PushSyncSettingsAsync(Arg.Any<Guid>());
     }
 
     [Theory]
@@ -431,13 +432,13 @@ public class UpdateOrganizationUserCommandTests
         // The email change fails before any role/collection changes are persisted.
         await sutProvider.GetDependency<IOrganizationUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .ReplaceAsync(default, default(IEnumerable<CollectionAccessSelection>));
+            .ReplaceAsync(Arg.Any<OrganizationUser>(), Arg.Any<IEnumerable<CollectionAccessSelection>>());
         await sutProvider.GetDependency<IEventService>()
             .DidNotReceiveWithAnyArgs()
-            .LogOrganizationUserEventAsync(default(OrganizationUser), default);
+            .LogOrganizationUserEventAsync(Arg.Any<OrganizationUser>(), Arg.Any<EventType>());
         await sutProvider.GetDependency<IPushNotificationService>()
             .DidNotReceiveWithAnyArgs()
-            .PushSyncSettingsAsync(default);
+            .PushSyncSettingsAsync(Arg.Any<Guid>());
     }
 
     [Theory]
@@ -468,7 +469,7 @@ public class UpdateOrganizationUserCommandTests
         // A name-only change never touches the email command.
         await sutProvider.GetDependency<IChangeEmailCommand>()
             .DidNotReceiveWithAnyArgs()
-            .ChangeEmailAsync(default, default);
+            .ChangeEmailAsync(Arg.Any<User>(), Arg.Any<string>());
     }
 
     [Theory]
@@ -515,10 +516,10 @@ public class UpdateOrganizationUserCommandTests
         Assert.True(result.IsSuccess);
         await sutProvider.GetDependency<IUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .ReplaceAsync(default(User));
+            .ReplaceAsync(Arg.Any<User>());
         await sutProvider.GetDependency<IPushNotificationService>()
             .DidNotReceiveWithAnyArgs()
-            .PushSyncSettingsAsync(default);
+            .PushSyncSettingsAsync(Arg.Any<Guid>());
     }
 
     [Theory]
@@ -535,10 +536,10 @@ public class UpdateOrganizationUserCommandTests
         Assert.True(result.IsSuccess);
         await sutProvider.GetDependency<IUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .GetByIdAsync(default);
+            .GetByIdAsync(Arg.Any<Guid>());
         await sutProvider.GetDependency<IUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .ReplaceAsync(default(User));
+            .ReplaceAsync(Arg.Any<User>());
     }
 
     [Theory]
@@ -567,7 +568,7 @@ public class UpdateOrganizationUserCommandTests
             .ChangeEmailAsync(userToUpdate, "new@claimed.example.com");
         await sutProvider.GetDependency<IUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .ReplaceAsync(default(User));
+            .ReplaceAsync(Arg.Any<User>());
         await sutProvider.GetDependency<IPushNotificationService>()
             .Received(1)
             .PushSyncSettingsAsync(userToUpdate.Id);
@@ -588,13 +589,13 @@ public class UpdateOrganizationUserCommandTests
         Assert.True(result.IsSuccess);
         await sutProvider.GetDependency<IUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .GetByIdAsync(default);
+            .GetByIdAsync(Arg.Any<Guid>());
         await sutProvider.GetDependency<IUserRepository>()
             .DidNotReceiveWithAnyArgs()
-            .ReplaceAsync(default(User));
+            .ReplaceAsync(Arg.Any<User>());
         await sutProvider.GetDependency<IPushNotificationService>()
             .DidNotReceiveWithAnyArgs()
-            .PushSyncSettingsAsync(default);
+            .PushSyncSettingsAsync(Arg.Any<Guid>());
     }
 
     private static UpdateOrganizationUserRequest Setup(
