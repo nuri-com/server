@@ -5,7 +5,6 @@ using Bit.Core.AdminConsole.OrganizationFeatures.Policies.PolicyRequirements;
 using Bit.Core.AdminConsole.Utilities.v2.Results;
 using Bit.Core.Auth.UserFeatures.UserEmail;
 using Bit.Core.Billing.Pricing;
-using Bit.Core.Entities;
 using Bit.Core.Enums;
 using Bit.Core.Exceptions;
 using Bit.Core.Models.Business;
@@ -47,16 +46,7 @@ public class UpdateOrganizationUserCommand(
             return validationResult.AsError;
         }
 
-        var wasDemotedFromPrivilegedRole = IsDemotingFromPrivilegedRole(request);
-        var enablingSecretsManager = IsEnablingSecretsManager(request);
-        var isEmailChanging = IsEmailChanging(request);
-
-        var organizationUser = request.OrganizationUserToUpdate;
-        organizationUser.Type = request.NewType;
-        organizationUser.Permissions = CoreHelpers.ClassToJsonData(request.NewPermissions);
-        organizationUser.AccessSecretsManager = request.NewAccessSecretsManager;
-
-        if (enablingSecretsManager)
+        if (IsEnablingSecretsManager(request))
         {
             var commandError = await TryEnablingSecretsManagerAsync(request);
             if (commandError is not null)
@@ -65,6 +55,7 @@ public class UpdateOrganizationUserCommand(
             }
         }
 
+        var isEmailChanging = IsEmailChanging(request);
         if (isEmailChanging || IsNameChanging(request))
         {
             var commandError = await TryApplyAccountChangesAsync(request, isEmailChanging);
@@ -73,6 +64,13 @@ public class UpdateOrganizationUserCommand(
                 return commandError;
             }
         }
+
+        var wasDemotedFromPrivilegedRole = IsDemotingFromPrivilegedRole(request);
+
+        var organizationUser = request.OrganizationUserToUpdate;
+        organizationUser.Type = request.NewType;
+        organizationUser.Permissions = CoreHelpers.ClassToJsonData(request.NewPermissions);
+        organizationUser.AccessSecretsManager = request.NewAccessSecretsManager;
 
         await organizationUserRepository.ReplaceAsync(organizationUser, request.NewCollections?.ToList() ?? []);
 
@@ -95,17 +93,25 @@ public class UpdateOrganizationUserCommand(
         return new None();
     }
 
-    private async Task<CommandError?> TryApplyAccountChangesAsync(UpdateOrganizationUserRequest request, bool isEmailChanging)
+    private async Task<CommandError?> TryApplyAccountChangesAsync(UpdateOrganizationUserRequest request,
+        bool isEmailChanging)
     {
+        if (request.UserToUpdate is null)
+        {
+            return null;
+        }
+
+        var userToUpdate = request.UserToUpdate;
+
         try
         {
             if (isEmailChanging)
             {
-                // ChangeEmailAsync persists the account (including any name change above) and syncs Stripe.
-                await changeEmailCommand.ChangeEmailAsync(request., request.NewEmail!);
+                await changeEmailCommand.ChangeEmailAsync(request.UserToUpdate, request.NewEmail!);
             }
             else
             {
+                userToUpdate.Name = request.NewName;
                 userToUpdate.RevisionDate = userToUpdate.AccountRevisionDate = timeProvider.GetUtcNow().UtcDateTime;
                 await userRepository.ReplaceAsync(userToUpdate);
             }
@@ -113,10 +119,14 @@ public class UpdateOrganizationUserCommand(
             // Notify the member's devices that their account state changed so clients re-sync.
             await pushNotificationService.PushSyncSettingsAsync(userToUpdate.Id);
             return null;
+        }
+        catch (BadRequestException ex)
+        {
+            return MapEmailChangeError(ex);
+        }
     }
 
-    // Map the known messages thrown by IChangeEmailCommand / IOrganizationDomainAllowEmailChangeQuery to typed
-    // errors; invalid-format and unverified-domain are already handled upstream, and unknown messages fall back.
+    // Map known errors and passthrough unknown errors.
     private static CommandError MapEmailChangeError(BadRequestException ex) => ex.Message switch
     {
         ChangeEmailCommand.EmailAlreadyInUseError => new EmailAlreadyInUseError(),
@@ -130,8 +140,6 @@ public class UpdateOrganizationUserCommand(
         && request.UserToUpdate is not null
         && !string.Equals(request.UserToUpdate.Email, request.NewEmail, StringComparison.InvariantCultureIgnoreCase);
 
-    // A null NewName means "leave unchanged"; blank clears the name. Names are compared case-sensitively so a
-    // capitalization-only edit still counts as a change.
     private static bool IsNameChanging(UpdateOrganizationUserRequest request)
     {
         if (request.NewName is null || request.UserToUpdate is null)
@@ -142,6 +150,7 @@ public class UpdateOrganizationUserCommand(
         var normalizedName = string.IsNullOrWhiteSpace(request.NewName) ? null : request.NewName;
         return !string.Equals(request.UserToUpdate.Name, normalizedName, StringComparison.Ordinal);
     }
+
     private static bool IsEnablingSecretsManager(UpdateOrganizationUserRequest request) =>
         !request.OrganizationUserToUpdate.AccessSecretsManager && request.NewAccessSecretsManager;
 
@@ -152,8 +161,7 @@ public class UpdateOrganizationUserCommand(
     private async Task<CommandError?> TryEnablingSecretsManagerAsync(UpdateOrganizationUserRequest request)
     {
         var organization = request.Organization;
-        var additionalSmSeatsRequired =
-            await countNewSmSeatsRequiredQuery.CountNewSmSeatsRequiredAsync(organization.Id, 1);
+        var additionalSmSeatsRequired = await countNewSmSeatsRequiredQuery.CountNewSmSeatsRequiredAsync(organization.Id, 1);
         if (additionalSmSeatsRequired > 0)
         {
             // Self-hosted instances can't autoscale their Stripe subscription.
@@ -178,7 +186,7 @@ public class UpdateOrganizationUserCommand(
         return null;
     }
 
-    private async Task<UpdateOrganizationUserRequest> LoadUserForEmailChangeAsync(UpdateOrganizationUserRequest request)
+    private async Task<UpdateOrganizationUserRequest> LoadUserToUpdateAsync(UpdateOrganizationUserRequest request)
     {
         var wantsAccountChange = !string.IsNullOrWhiteSpace(request.NewEmail) || request.NewName is not null;
         if (!wantsAccountChange || !request.OrganizationUserToUpdate.UserId.HasValue)
