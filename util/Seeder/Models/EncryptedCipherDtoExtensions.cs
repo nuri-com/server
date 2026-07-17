@@ -34,7 +34,8 @@ internal static class EncryptedCipherDtoExtensions
             UserDisplayName = f.UserDisplayName,
             Counter = f.Counter,
             Discoverable = f.Discoverable,
-            CreationDate = f.CreationDate
+            CreationDate = f.CreationDate,
+            ExtensionState = f.ExtensionState
         }).ToArray(),
         PasswordHistory = e.Login?.PasswordHistory?.Select(p => new CipherPasswordHistoryData
         {

@@ -14,7 +14,7 @@ public sealed class EncryptPropertyAttributeTests
         // 2 top-level (name, notes)
         // 3 login (username, password, totp)
         // 2 loginUri[*] (uri, uriChecksum)
-        // 12 Fido2Credential (everything but discoverable)
+        // 13 Fido2Credential (everything but discoverable)
         // 1 passwordHistory[*].password
         // 6 card
         // 18 identity
@@ -23,7 +23,7 @@ public sealed class EncryptPropertyAttributeTests
         // 11 driversLicense
         // 13 passport
         // 2 fields[*] (name, value)
-        Assert.Equal(83, paths.Length);
+        Assert.Equal(84, paths.Length);
     }
 
     [Fact]

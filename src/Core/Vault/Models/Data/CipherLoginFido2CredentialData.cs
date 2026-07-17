@@ -20,4 +20,5 @@ public class CipherLoginFido2CredentialData
     public string Counter { get; set; }
     public string Discoverable { get; set; }
     public DateTime CreationDate { get; set; }
+    public string ExtensionState { get; set; }
 }

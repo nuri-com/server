@@ -148,6 +148,9 @@ public class Fido2CredentialViewDto
     [JsonPropertyName("userDisplayName")]
     [EncryptProperty]
     public required string UserDisplayName { get; set; }
+    [JsonPropertyName("extensionState")]
+    [EncryptProperty]
+    public string? ExtensionState { get; set; }
 }
 
 public class LoginUriViewDto
