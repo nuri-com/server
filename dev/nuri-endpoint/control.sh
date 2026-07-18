@@ -68,10 +68,10 @@ verify_ownership_marker() {
 
 compose() {
   verify_ownership_marker "${DOCKER_ENV_MARKER}" "dev/.env ownership marker"
-  secure_private_file "${DOCKER_ENV}" "dev/.env"
-  docker compose \
+  node "${PRIVATE_FILES}" run-dotenv "${DOCKER_ENV}" "dev/.env" -- \
+    docker compose \
     --project-name bitwardenserver_nuri76 \
-    --env-file "${DOCKER_ENV}" \
+    --env-file /dev/null \
     -f "${COMPOSE_FILE}" \
     -f "${COMPOSE_OVERRIDE}" \
     "$@"
@@ -189,10 +189,11 @@ ensure_identity_certificate() {
   )"
 
   if path_exists_including_symlink "${IDENTITY_CERTIFICATE}"; then
-    secure_private_file "${IDENTITY_CERTIFICATE}" "Identity certificate"
     if NURI_IDENTITY_CERT_PASSWORD="${certificate_password}" \
-      openssl pkcs12 -in "${IDENTITY_CERTIFICATE}" -passin env:NURI_IDENTITY_CERT_PASSWORD \
-        -noout >/dev/null 2>&1; then
+      node "${PRIVATE_FILES}" run-input "${IDENTITY_CERTIFICATE}" \
+        "Identity certificate" -- \
+        openssl pkcs12 -in '{private-file}' -passin env:NURI_IDENTITY_CERT_PASSWORD \
+          -noout >/dev/null 2>&1; then
       return
     fi
     echo "existing controller identity certificate cannot be opened; move it aside before retrying" >&2
@@ -310,9 +311,12 @@ expected_command_for() {
 pid_is_running() {
   local name="$1"
   local pid_file="${PID_DIR}/${name}.pid"
-  path_exists_including_symlink "${pid_file}" || return 1
-  local pid expected command_line
-  pid="$(read_private_file "${pid_file}" "${name} pid file")" || return 1
+  local pid="${2:-}"
+  local expected command_line
+  if [[ -z "${pid}" ]]; then
+    path_exists_including_symlink "${pid_file}" || return 1
+    pid="$(read_private_file "${pid_file}" "${name} pid file")" || return 1
+  fi
   [[ "${pid}" =~ ^[0-9]+$ ]] && (( pid > 1 )) || return 1
   kill -0 "${pid}" >/dev/null 2>&1 || return 1
   expected="$(expected_command_for "${name}")" || return 1
@@ -338,8 +342,7 @@ start_background() {
   fi
   clear_stale_pid_file "${name}"
   local log_file="${LOG_DIR}/${name}.log"
-  : | atomic_write_private_file "${log_file}" "${name} log"
-  nohup "$@" >"${log_file}" 2>&1 &
+  node "${PRIVATE_FILES}" run-logged "${log_file}" "${name} log" -- "$@" &
   local started_pid="$!"
   if ! printf '%s\n' "${started_pid}" |
     atomic_write_private_file "${PID_DIR}/${name}.pid" "${name} pid file"; then
@@ -404,11 +407,10 @@ start_gateway() {
 
 start_ngrok() {
   require_port_free 4040 "ngrok inspection API"
-  : | atomic_write_private_file "${LOG_DIR}/ngrok-agent.log" "ngrok agent log"
   start_background ngrok ngrok http 127.0.0.1:8088 \
     --name nuri-bitwarden-76 \
     --description "Nuri Bitwarden physical-device proof" \
-    --log "${LOG_DIR}/ngrok-agent.log" \
+    --log stdout \
     --log-format json
 
   local attempt public_base
@@ -448,11 +450,13 @@ start_services() {
   require_port_free 4000 "Api"
   start_background identity "${SCRIPT_DIR}/run-service.sh" \
     "${STATE_DIR}/identity.environment" \
+    "${IDENTITY_CERTIFICATE}" \
     "${REPO_ROOT}/src/Identity/Identity.csproj"
   wait_for_owned_tcp identity 33656 "Identity"
   require_port_free 4000 "Api"
   start_background api "${SCRIPT_DIR}/run-service.sh" \
     "${STATE_DIR}/api.environment" \
+    "${IDENTITY_CERTIFICATE}" \
     "${REPO_ROOT}/src/Api/Api.csproj"
   wait_for_owned_tcp api 4000 "Api"
 }
@@ -497,7 +501,7 @@ stop_one() {
   path_exists_including_symlink "${pid_file}" || return 0
   local pid
   pid="$(read_private_file "${pid_file}" "${name} pid file")" || return
-  if pid_is_running "${name}"; then
+  if pid_is_running "${name}" "${pid}"; then
     kill "${pid}"
     echo "stopped ${name}"
   elif [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" >/dev/null 2>&1; then
@@ -607,15 +611,17 @@ stop_all() {
   echo "endpoint stopped; database volume and ignored secrets were preserved"
 }
 
-case "${1:-}" in
-  prepare) prepare ;;
-  start) start_all ;;
-  configure) configure_installation ;;
-  health) health ;;
-  status) status ;;
-  stop) stop_all ;;
-  *)
-    echo "usage: $0 {prepare|start|configure|health|status|stop}" >&2
-    exit 64
-    ;;
-esac
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  case "${1:-}" in
+    prepare) prepare ;;
+    start) start_all ;;
+    configure) configure_installation ;;
+    health) health ;;
+    status) status ;;
+    stop) stop_all ;;
+    *)
+      echo "usage: $0 {prepare|start|configure|health|status|stop}" >&2
+      exit 64
+      ;;
+  esac
+fi

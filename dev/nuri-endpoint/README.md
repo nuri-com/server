@@ -63,6 +63,14 @@ environment files, ownership/provenance markers, runtime logs and PID files, the
 public endpoint marker, and the Identity certificate. Controller runtime
 directories are regular non-symlink directories with exact mode `0700`.
 
+Consumers keep that boundary intact after validation: Compose receives the
+already-read `dev/.env` values through its child environment, Api and Identity
+receive an already-read runtime environment plus an inherited certificate file
+descriptor, and service/ngrok output is connected directly to an opened log
+descriptor. Swapping any of those paths after the descriptor is opened cannot
+redirect a later read or write. Cleanup likewise reads a PID once and validates
+and signals that exact captured value.
+
 The controller never adopts pre-existing `dev/.env` or `dev/secrets.json`
 files: a state-directory ownership marker must match files it created. Its
 Compose project name is also fixed, so `stop` cannot target an unrelated local
