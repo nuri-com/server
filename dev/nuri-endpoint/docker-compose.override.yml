@@ -1,0 +1,9 @@
+services:
+  mssql:
+    ports: !override
+      - "127.0.0.1:1433:1433"
+
+  mail:
+    ports: !override
+      - "127.0.0.1:${MAILCATCHER_PORT}:1080"
+      - "127.0.0.1:10250:1025"

@@ -21,3 +21,7 @@ reverse-proxy.conf
 *.crt
 
 seeds.local.json
+
+# Local physical-device endpoint state. The controller defaults to an external
+# state directory, but this keeps an explicit in-repo override secret-safe.
+.nuri-endpoint/
