@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using Bit.Api.Vault.Models;
 using Bit.Api.Vault.Models.Request;
+using Bit.Core.Exceptions;
 using Bit.Core.Vault.Entities;
 using Bit.Core.Vault.Enums;
 using Bit.Core.Vault.Models.Data;
@@ -262,5 +263,217 @@ public class CipherRequestModelTests
         request.ToCipher(cipher);
 
         Assert.Equal(expectedData, cipher.Data);
+    }
+
+    [Fact]
+    public void ToCipher_Login_PreservesFido2ExtensionState()
+    {
+        const string extensionState = "2.extension-state|encrypted";
+        var request = new CipherRequestModel
+        {
+            Type = CipherType.Login,
+            Name = "2.name|encrypted",
+            Login = new CipherLoginModel
+            {
+                Fido2Credentials =
+                [
+                    new CipherFido2CredentialModel
+                    {
+                        CredentialId = "2.credential-id|encrypted",
+                        CreationDate = DateTime.UtcNow,
+                        ExtensionState = extensionState,
+                    }
+                ]
+            }
+        };
+
+        var cipher = new Cipher { Type = CipherType.Login };
+        request.ToCipher(cipher);
+
+        var data = JsonSerializer.Deserialize<CipherLoginData>(cipher.Data);
+
+        Assert.NotNull(data?.Fido2Credentials);
+        Assert.Single(data.Fido2Credentials);
+        Assert.Equal(extensionState, data.Fido2Credentials[0].ExtensionState);
+    }
+
+    [Fact]
+    public void ToCipher_Login_AcceptsFido2CredentialWithoutExtensionState()
+    {
+        var request = new CipherRequestModel
+        {
+            Type = CipherType.Login,
+            Name = "2.name|encrypted",
+            Login = new CipherLoginModel
+            {
+                Fido2Credentials =
+                [
+                    new CipherFido2CredentialModel
+                    {
+                        CredentialId = "2.credential-id|encrypted",
+                        CreationDate = DateTime.UtcNow,
+                    }
+                ]
+            }
+        };
+
+        var cipher = new Cipher { Type = CipherType.Login };
+        request.ToCipher(cipher);
+
+        var data = JsonSerializer.Deserialize<CipherLoginData>(cipher.Data);
+
+        Assert.NotNull(data?.Fido2Credentials);
+        Assert.Single(data.Fido2Credentials);
+        Assert.Null(data.Fido2Credentials[0].ExtensionState);
+    }
+
+    [Fact]
+    public void ToCipher_Login_RejectsStructuredEditThatDropsExistingFido2ExtensionState()
+    {
+        var cipher = CreateLoginCipherWithExtensionState();
+        var request = CreateLoginRequestWithoutExtensionState();
+
+        var exception = Assert.Throws<BadRequestException>(() => request.ToCipher(cipher));
+
+        Assert.Contains("preserving its passkey extension state", exception.Message);
+        Assert.Contains("2.extension-state|encrypted", cipher.Data);
+    }
+
+    [Fact]
+    public void ToCipher_Login_RejectsDataEditThatDropsExistingFido2ExtensionState()
+    {
+        var cipher = CreateLoginCipherWithExtensionState();
+        var request = new CipherRequestModel
+        {
+            Type = CipherType.Login,
+            Data = JsonSerializer.Serialize(
+                new CipherLoginData
+                {
+                    Fido2Credentials =
+                    [
+                        new CipherLoginFido2CredentialData
+                        {
+                            CredentialId = "2.credential-id|encrypted",
+                            CreationDate = DateTime.UtcNow,
+                        }
+                    ]
+                },
+                new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                })
+        };
+
+        Assert.Throws<BadRequestException>(() => request.ToCipher(cipher));
+        Assert.Contains("2.extension-state|encrypted", cipher.Data);
+    }
+
+    [Fact]
+    public void ToCipher_Login_AllowsEditThatPreservesExistingFido2ExtensionState()
+    {
+        var cipher = CreateLoginCipherWithExtensionState();
+        var request = new CipherRequestModel
+        {
+            Type = CipherType.Login,
+            Name = "2.updated-name|encrypted",
+            Login = new CipherLoginModel
+            {
+                Fido2Credentials =
+                [
+                    new CipherFido2CredentialModel
+                    {
+                        CredentialId = "2.credential-id|reencrypted",
+                        CreationDate = DateTime.UtcNow,
+                        ExtensionState = "2.extension-state|reencrypted",
+                    }
+                ]
+            }
+        };
+
+        request.ToCipher(cipher);
+
+        var data = JsonSerializer.Deserialize<CipherLoginData>(cipher.Data);
+        Assert.Equal("2.extension-state|reencrypted", data?.Fido2Credentials?[0].ExtensionState);
+    }
+
+    [Fact]
+    public void ToCipher_Login_RejectsMovingExtensionStateToAnotherCredential()
+    {
+        var cipher = CreateLoginCipherWithExtensionState();
+        var existingData = JsonSerializer.Deserialize<CipherLoginData>(cipher.Data);
+        existingData!.Fido2Credentials =
+        [
+            existingData.Fido2Credentials[0],
+            new CipherLoginFido2CredentialData
+            {
+                CredentialId = "2.second-credential-id|encrypted",
+                CreationDate = DateTime.UtcNow,
+            }
+        ];
+        cipher.Data = JsonSerializer.Serialize(existingData);
+        var request = new CipherRequestModel
+        {
+            Type = CipherType.Login,
+            Name = "2.updated-name|encrypted",
+            Login = new CipherLoginModel
+            {
+                Fido2Credentials =
+                [
+                    new CipherFido2CredentialModel
+                    {
+                        CredentialId = "2.credential-id|encrypted",
+                        CreationDate = DateTime.UtcNow,
+                    },
+                    new CipherFido2CredentialModel
+                    {
+                        CredentialId = "2.second-credential-id|encrypted",
+                        CreationDate = DateTime.UtcNow,
+                        ExtensionState = "2.extension-state|encrypted",
+                    }
+                ]
+            }
+        };
+
+        Assert.Throws<BadRequestException>(() => request.ToCipher(cipher));
+    }
+
+    private static Cipher CreateLoginCipherWithExtensionState()
+    {
+        return new Cipher
+        {
+            Type = CipherType.Login,
+            Data = JsonSerializer.Serialize(new CipherLoginData
+            {
+                Fido2Credentials =
+                [
+                    new CipherLoginFido2CredentialData
+                    {
+                        CredentialId = "2.credential-id|encrypted",
+                        CreationDate = DateTime.UtcNow,
+                        ExtensionState = "2.extension-state|encrypted",
+                    }
+                ]
+            })
+        };
+    }
+
+    private static CipherRequestModel CreateLoginRequestWithoutExtensionState()
+    {
+        return new CipherRequestModel
+        {
+            Type = CipherType.Login,
+            Name = "2.updated-name|encrypted",
+            Login = new CipherLoginModel
+            {
+                Fido2Credentials =
+                [
+                    new CipherFido2CredentialModel
+                    {
+                        CredentialId = "2.credential-id|encrypted",
+                        CreationDate = DateTime.UtcNow,
+                    }
+                ]
+            }
+        };
     }
 }

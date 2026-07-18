@@ -45,6 +45,7 @@ public sealed class EncryptPropertyAttributeTests
         Assert.Contains("login.totp", paths);
         Assert.Contains("login.uris[*].uri", paths);
         Assert.Contains("login.uris[*].uriChecksum", paths);
+        Assert.Contains("login.fido2Credentials[*].extensionState", paths);
     }
 
     [Fact]

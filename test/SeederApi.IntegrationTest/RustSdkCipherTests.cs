@@ -574,6 +574,10 @@ public sealed class RustSdkCipherTests
     public void EncryptFields_Fido2AndPasswordHistory_Roundtrip()
     {
         var orgKeys = RustSdkService.GenerateOrganizationKeys();
+        const string extensionState = "{\"algorithm\":\"hmac-sha-256\",\"uvSeed\":\"synthetic-seed\"}";
+        var fido2Credential = LoginCipherSeeder.CreateFido2Credential(
+            "example.com", "Example", "user@example.com");
+        fido2Credential.ExtensionState = extensionState;
 
         var cipher = new CipherViewDto
         {
@@ -585,7 +589,7 @@ public sealed class RustSdkCipherTests
                 Password = "CurrentP@ss!",
                 Fido2Credentials =
                 [
-                    LoginCipherSeeder.CreateFido2Credential("example.com", "Example", "user@example.com")
+                    fido2Credential
                 ],
                 PasswordHistory =
                 [
@@ -609,6 +613,7 @@ public sealed class RustSdkCipherTests
 
         Assert.DoesNotContain("PreviousP@ss1!", encryptedJson);
         Assert.DoesNotContain("PreviousP@ss2!", encryptedJson);
+        Assert.DoesNotContain(extensionState, encryptedJson);
 
         using var doc = JsonDocument.Parse(encryptedJson);
         var login = doc.RootElement.GetProperty("login");
@@ -626,6 +631,8 @@ public sealed class RustSdkCipherTests
         Assert.Equal("Example", RustSdkService.DecryptString(fido2.GetProperty("rpName").GetString()!, orgKeys.Key));
         Assert.Equal("user@example.com", RustSdkService.DecryptString(fido2.GetProperty("userName").GetString()!, orgKeys.Key));
         Assert.StartsWith("2.", fido2.GetProperty("keyValue").GetString());
+        Assert.Equal(extensionState,
+            RustSdkService.DecryptString(fido2.GetProperty("extensionState").GetString()!, orgKeys.Key));
     }
 
     [Fact]
@@ -637,6 +644,7 @@ public sealed class RustSdkCipherTests
         Assert.Contains("login.fido2Credentials[*].keyValue", paths);
         Assert.Contains("login.fido2Credentials[*].userName", paths);
         Assert.Contains("login.fido2Credentials[*].credentialId", paths);
+        Assert.Contains("login.fido2Credentials[*].extensionState", paths);
     }
 
     [Fact]

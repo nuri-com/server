@@ -3,6 +3,7 @@
 
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
+using Bit.Core.Exceptions;
 using Bit.Core.Utilities;
 using Bit.Core.Vault.Entities;
 using Bit.Core.Vault.Enums;
@@ -93,6 +94,12 @@ public class CipherRequestModel
 
     public Cipher ToCipher(Cipher existingCipher, Guid? userId = null)
     {
+        if (WouldRemoveFido2ExtensionState(existingCipher))
+        {
+            throw new BadRequestException(
+                "Cannot edit item without preserving its passkey extension state. Update Bitwarden and try again.");
+        }
+
         // If Data field is provided, use it directly
         if (!string.IsNullOrWhiteSpace(Data))
         {
@@ -191,6 +198,63 @@ public class CipherRequestModel
 
         existingCipher.SetAttachments(attachments);
         return existingCipher;
+    }
+
+    private bool WouldRemoveFido2ExtensionState(Cipher existingCipher)
+    {
+        if (existingCipher.Type != CipherType.Login || existingCipher.IsDataBlobEncrypted() ||
+            string.IsNullOrWhiteSpace(existingCipher.Data))
+        {
+            return false;
+        }
+
+        CipherLoginData existingLoginData;
+        try
+        {
+            existingLoginData = JsonSerializer.Deserialize<CipherLoginData>(existingCipher.Data, JsonHelpers.IgnoreCase);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        var existingCredentials = existingLoginData?.Fido2Credentials ?? [];
+        if (!existingCredentials.Any(credential => !string.IsNullOrWhiteSpace(credential.ExtensionState)))
+        {
+            return false;
+        }
+
+        CipherLoginData replacementLoginData;
+        if (!string.IsNullOrWhiteSpace(Data))
+        {
+            if (new Cipher { Data = Data }.IsDataBlobEncrypted())
+            {
+                // The server cannot inspect a blob-encrypted payload. Its authenticated ciphertext
+                // is the source of truth, so preservation remains the writing client's responsibility.
+                return false;
+            }
+
+            try
+            {
+                replacementLoginData = JsonSerializer.Deserialize<CipherLoginData>(Data, JsonHelpers.IgnoreCase);
+            }
+            catch (JsonException)
+            {
+                return true;
+            }
+        }
+        else
+        {
+            replacementLoginData = ToCipherLoginData();
+        }
+
+        var replacementCredentials = replacementLoginData?.Fido2Credentials ?? [];
+        return existingCredentials
+            .Select((credential, index) => (credential, index))
+            .Any(existing =>
+                !string.IsNullOrWhiteSpace(existing.credential.ExtensionState) &&
+                (existing.index >= replacementCredentials.Length ||
+                 string.IsNullOrWhiteSpace(replacementCredentials[existing.index].ExtensionState)));
     }
 
     public Cipher ToOrganizationCipher()
