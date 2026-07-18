@@ -20,6 +20,9 @@ headers are never logged by the gateway.
 `c3f9ac90705a47b4566ed5b602ee919f70297b8e`
 
 The controller refuses to run unless this commit is an ancestor of `HEAD`.
+It also refuses tracked source changes and records the exact Git commit plus
+content hashes of the Api, Identity, and migrator binaries after each successful
+build. Existing binaries are reused only when that provenance still matches.
 
 ## Run
 
@@ -39,11 +42,20 @@ a concurrent build, and runs public health checks. It then stays in the
 foreground so process lifetime is explicit; keep that terminal open and use
 Ctrl-C for a clean stop.
 
+Api and Identity run with the non-Development `SelfHosted` environment and
+explicit loopback URLs. The controller creates an isolated password-protected
+Identity certificate and injects configuration through mode-`0600` external
+environment files, so the public test endpoint does not expose Developer
+Exception Page output or development stack traces.
+
 The controller never adopts pre-existing `dev/.env` or `dev/secrets.json`
 files: a state-directory ownership marker must match files it created. Its
 Compose project name is also fixed, so `stop` cannot target an unrelated local
-Compose project. The development signing key is generated in the external
-state directory as well, rather than adopting an ignored repository key.
+Compose project. The Identity signing certificate is generated in the external
+state directory as well, rather than adopting an ignored repository key. Before
+ngrok starts, the controller rejects occupied service ports, validates stale PID
+files against expected commands, and requires the gateway's exact local health
+marker. It also forces the gateway host and port to `127.0.0.1:8088`.
 
 MSSQL is considered ready only after an authenticated in-container `SELECT 1`.
 The migration wrapper propagates the migrator's native exit code, so a failed

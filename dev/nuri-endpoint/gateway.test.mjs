@@ -69,6 +69,15 @@ test("strips the Api prefix and streams the request body", async () => {
   assert.equal(received.forwardedHost, "127.0.0.1:18088");
 });
 
+test("reports the exact controller health marker", async () => {
+  const response = await fetch("http://127.0.0.1:18088/healthz");
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    service: "nuri-bitwarden-gateway",
+  });
+});
+
 test("preserves the Identity path base", async () => {
   const response = await fetch(
     "http://127.0.0.1:18088/identity/.well-known/openid-configuration",

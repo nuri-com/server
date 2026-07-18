@@ -13,6 +13,11 @@ readonly COMPOSE_OVERRIDE="${SCRIPT_DIR}/docker-compose.override.yml"
 readonly COMPOSE_FILE="${REPO_ROOT}/dev/docker-compose.yml"
 readonly DOCKER_ENV="${REPO_ROOT}/dev/.env"
 readonly DOCKER_ENV_MARKER="${STATE_DIR}/owns-dev-env"
+readonly BUILD_PROVENANCE="${STATE_DIR}/build-provenance"
+readonly IDENTITY_CERTIFICATE="${STATE_DIR}/identity-server.pfx"
+readonly API_DLL="${REPO_ROOT}/src/Api/bin/Debug/net10.0/Api.dll"
+readonly IDENTITY_DLL="${REPO_ROOT}/src/Identity/bin/Debug/net10.0/Identity.dll"
+readonly MIGRATOR_DLL="${REPO_ROOT}/util/MsSqlMigratorUtility/bin/Debug/net10.0/MsSqlMigratorUtility.dll"
 
 export DOTNET_CLI_HOME="${DOTNET_HOME}"
 export NUGET_PACKAGES="${NUGET_PACKAGES_DIR}"
@@ -55,6 +60,39 @@ verify_base() {
   }
 }
 
+verify_tracked_source_clean() {
+  if ! git -C "${REPO_ROOT}" diff --quiet -- ||
+    ! git -C "${REPO_ROOT}" diff --cached --quiet --; then
+    echo "refusing endpoint build: tracked source differs from HEAD" >&2
+    exit 1
+  fi
+}
+
+current_build_provenance() {
+  local output
+  git -C "${REPO_ROOT}" rev-parse HEAD
+  for output in "${API_DLL}" "${IDENTITY_DLL}" "${MIGRATOR_DLL}"; do
+    [[ -f "${output}" ]] || return 1
+    git hash-object "${output}"
+  done
+}
+
+build_outputs_are_current() {
+  [[ -f "${BUILD_PROVENANCE}" ]] || return 1
+  local recorded current
+  recorded="$(<"${BUILD_PROVENANCE}")"
+  current="$(current_build_provenance)" || return 1
+  [[ "${recorded}" == "${current}" ]]
+}
+
+record_build_provenance() {
+  verify_tracked_source_clean
+  local temporary_marker="${BUILD_PROVENANCE}.tmp.$$"
+  current_build_provenance >"${temporary_marker}"
+  chmod 600 "${temporary_marker}"
+  mv -f "${temporary_marker}" "${BUILD_PROVENANCE}"
+}
+
 write_docker_env() {
   if [[ -f "${DOCKER_ENV}" ]]; then
     [[ -f "${DOCKER_ENV_MARKER}" ]] || {
@@ -65,11 +103,17 @@ write_docker_env() {
       echo "owned ${DOCKER_ENV} has an unexpected Compose project" >&2
       exit 1
     }
+    if ! grep -q '^IDENTITY_CERTIFICATE_PASSWORD=' "${DOCKER_ENV}"; then
+      printf 'IDENTITY_CERTIFICATE_PASSWORD=Nuri76_Cert_Aa1!%s\n' \
+        "$(openssl rand -hex 16)" >>"${DOCKER_ENV}"
+      chmod 600 "${DOCKER_ENV}"
+    fi
     return
   fi
 
-  local password
+  local password certificate_password
   password="Nuri76_Aa1!$(openssl rand -hex 16)"
+  certificate_password="Nuri76_Cert_Aa1!$(openssl rand -hex 16)"
   {
     printf 'COMPOSE_PROJECT_NAME=bitwardenserver_nuri76\n'
     printf 'MSSQL_PASSWORD=%s\n' "${password}"
@@ -84,11 +128,60 @@ write_docker_env() {
     printf 'IDENTITY_PROXY_PORT=33756\n'
     printf 'RABBITMQ_DEFAULT_USER=bitwarden\n'
     printf 'RABBITMQ_DEFAULT_PASS=%s\n' "${password}"
+    printf 'IDENTITY_CERTIFICATE_PASSWORD=%s\n' "${certificate_password}"
   } >"${DOCKER_ENV}"
   chmod 600 "${DOCKER_ENV}"
   printf 'owned by dev/nuri-endpoint/control.sh\n' >"${DOCKER_ENV_MARKER}"
   chmod 600 "${DOCKER_ENV_MARKER}"
   echo "created ignored dev/.env"
+}
+
+ensure_identity_certificate() {
+  local certificate_password
+  certificate_password="$(node -e '
+    const fs = require("fs");
+    const line = fs.readFileSync(process.argv[1], "utf8")
+      .split(/\r?\n/u)
+      .find(item => item.startsWith("IDENTITY_CERTIFICATE_PASSWORD="));
+    if (!line) process.exit(1);
+    process.stdout.write(line.slice(line.indexOf("=") + 1));
+  ' "${DOCKER_ENV}")"
+
+  if [[ -f "${IDENTITY_CERTIFICATE}" ]]; then
+    if NURI_IDENTITY_CERT_PASSWORD="${certificate_password}" \
+      openssl pkcs12 -in "${IDENTITY_CERTIFICATE}" -passin env:NURI_IDENTITY_CERT_PASSWORD \
+        -noout >/dev/null 2>&1; then
+      return
+    fi
+    echo "existing controller identity certificate cannot be opened; move it aside before retrying" >&2
+    exit 1
+  fi
+
+  local temporary_key="${STATE_DIR}/identity-server.key.tmp.$$"
+  local temporary_certificate="${STATE_DIR}/identity-server.crt.tmp.$$"
+  local temporary_bundle="${STATE_DIR}/identity-server.pfx.tmp.$$"
+  if ! NURI_IDENTITY_CERT_PASSWORD="${certificate_password}" \
+    openssl req -x509 -newkey rsa:2048 -sha256 \
+      -keyout "${temporary_key}" -out "${temporary_certificate}" \
+      -subj "/CN=Nuri Bitwarden Device Test" -days 3650 \
+      -passout env:NURI_IDENTITY_CERT_PASSWORD >/dev/null 2>&1; then
+    rm -f "${temporary_key}" "${temporary_certificate}" "${temporary_bundle}"
+    echo "failed to generate the isolated Identity certificate" >&2
+    exit 1
+  fi
+  if ! NURI_IDENTITY_CERT_PASSWORD="${certificate_password}" \
+    openssl pkcs12 -export -out "${temporary_bundle}" \
+      -inkey "${temporary_key}" -in "${temporary_certificate}" \
+      -passin env:NURI_IDENTITY_CERT_PASSWORD \
+      -passout env:NURI_IDENTITY_CERT_PASSWORD >/dev/null 2>&1; then
+    rm -f "${temporary_key}" "${temporary_certificate}" "${temporary_bundle}"
+    echo "failed to package the isolated Identity certificate" >&2
+    exit 1
+  fi
+  chmod 600 "${temporary_bundle}"
+  mv -f "${temporary_bundle}" "${IDENTITY_CERTIFICATE}"
+  rm -f "${temporary_key}" "${temporary_certificate}"
+  echo "created isolated non-Development Identity certificate"
 }
 
 render_and_apply_secrets() {
@@ -181,30 +274,107 @@ migrate_database() {
   pwsh "${SCRIPT_DIR}/migrate.ps1" "${REPO_ROOT}"
 }
 
+expected_command_for() {
+  local name="$1"
+  case "${name}" in
+    gateway) printf '%s\n' "gateway.mjs" ;;
+    ngrok) printf '%s\n' "ngrok http 127.0.0.1:8088" ;;
+    identity) printf '%s\n' "src/Identity/Identity.csproj" ;;
+    api) printf '%s\n' "src/Api/Api.csproj" ;;
+    *) return 1 ;;
+  esac
+}
+
 pid_is_running() {
   local name="$1"
   local pid_file="${PID_DIR}/${name}.pid"
-  [[ -f "${pid_file}" ]] && kill -0 "$(<"${pid_file}")" >/dev/null 2>&1
+  [[ -f "${pid_file}" ]] || return 1
+  local pid expected command_line
+  pid="$(<"${pid_file}")"
+  [[ "${pid}" =~ ^[0-9]+$ ]] && (( pid > 1 )) || return 1
+  kill -0 "${pid}" >/dev/null 2>&1 || return 1
+  expected="$(expected_command_for "${name}")" || return 1
+  command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+  [[ -n "${command_line}" && "${command_line}" == *"${expected}"* ]]
+}
+
+clear_stale_pid_file() {
+  local name="$1"
+  local pid_file="${PID_DIR}/${name}.pid"
+  if [[ -f "${pid_file}" ]] && ! pid_is_running "${name}"; then
+    rm -f "${pid_file}"
+    echo "cleared stale ${name} pid file"
+  fi
 }
 
 start_background() {
   local name="$1"
   shift
   if pid_is_running "${name}"; then
-    echo "${name} already running"
-    return
+    echo "refusing to adopt an already running ${name} process" >&2
+    return 1
   fi
+  clear_stale_pid_file "${name}"
   nohup "$@" >"${LOG_DIR}/${name}.log" 2>&1 &
   echo "$!" >"${PID_DIR}/${name}.pid"
   echo "started ${name}"
 }
 
+require_port_free() {
+  local port="$1"
+  local label="$2"
+  if nc -z 127.0.0.1 "${port}" >/dev/null 2>&1; then
+    echo "refusing to expose ${label}: loopback port ${port} is already occupied" >&2
+    exit 1
+  fi
+}
+
+wait_for_owned_tcp() {
+  local name="$1"
+  local port="$2"
+  local label="$3"
+  local attempt
+  for attempt in {1..120}; do
+    if ! pid_is_running "${name}"; then
+      echo "${label} process exited before owning loopback port ${port}; inspect ${LOG_DIR}/${name}.log" >&2
+      exit 1
+    fi
+    if nc -z 127.0.0.1 "${port}" >/dev/null 2>&1; then
+      echo "${label} is accepting local connections from the expected process"
+      return
+    fi
+    sleep 1
+  done
+  echo "timed out waiting for ${label}" >&2
+  exit 1
+}
+
+verify_local_gateway() {
+  curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8088/healthz |
+    node -e '
+      let input = "";
+      process.stdin.on("data", chunk => input += chunk);
+      process.stdin.on("end", () => {
+        const actual = JSON.parse(input);
+        const expected = { ok: true, service: "nuri-bitwarden-gateway" };
+        if (JSON.stringify(actual) !== JSON.stringify(expected)) process.exit(1);
+      });
+    '
+  echo "exact local gateway health marker passed"
+}
+
 start_gateway() {
-  start_background gateway node "${SCRIPT_DIR}/gateway.mjs"
-  wait_for_tcp 8088 "path gateway"
+  require_port_free 8088 "path gateway"
+  start_background gateway env \
+    NURI_GATEWAY_HOST=127.0.0.1 \
+    NURI_GATEWAY_PORT=8088 \
+    node "${SCRIPT_DIR}/gateway.mjs"
+  wait_for_owned_tcp gateway 8088 "path gateway"
+  verify_local_gateway
 }
 
 start_ngrok() {
+  require_port_free 4040 "ngrok inspection API"
   start_background ngrok ngrok http 127.0.0.1:8088 \
     --name nuri-bitwarden-76 \
     --description "Nuri Bitwarden physical-device proof" \
@@ -213,13 +383,19 @@ start_ngrok() {
 
   local attempt public_base
   for attempt in {1..60}; do
+    if ! pid_is_running ngrok; then
+      echo "ngrok exited before publishing the endpoint; inspect ${LOG_DIR}/ngrok.log" >&2
+      exit 1
+    fi
     public_base="$(curl -fsS http://127.0.0.1:4040/api/tunnels 2>/dev/null | node -e '
       let input="";
       process.stdin.on("data", chunk => input += chunk);
       process.stdin.on("end", () => {
         try {
           const tunnel = JSON.parse(input).tunnels.find(
-            item => item.proto === "https" && item.name === "nuri-bitwarden-76",
+            item => item.proto === "https" &&
+              item.name === "nuri-bitwarden-76" &&
+              item.config?.addr === "http://127.0.0.1:8088",
           );
           if (tunnel) process.stdout.write(tunnel.public_url);
         } catch {}
@@ -238,20 +414,17 @@ start_ngrok() {
 }
 
 start_services() {
-  start_background identity env \
-    DOTNET_CLI_HOME="${DOTNET_HOME}" \
-    NUGET_PACKAGES="${NUGET_PACKAGES_DIR}" \
-    DOTNET_NOLOGO=1 \
-    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-    dotnet run --no-build --no-restore --project "${REPO_ROOT}/src/Identity/Identity.csproj"
-  start_background api env \
-    DOTNET_CLI_HOME="${DOTNET_HOME}" \
-    NUGET_PACKAGES="${NUGET_PACKAGES_DIR}" \
-    DOTNET_NOLOGO=1 \
-    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-    dotnet run --no-build --no-restore --project "${REPO_ROOT}/src/Api/Api.csproj"
-  wait_for_tcp 33656 "Identity"
-  wait_for_tcp 4000 "Api"
+  require_port_free 33656 "Identity"
+  require_port_free 4000 "Api"
+  start_background identity "${SCRIPT_DIR}/run-service.sh" \
+    "${STATE_DIR}/identity.environment" \
+    "${REPO_ROOT}/src/Identity/Identity.csproj"
+  wait_for_owned_tcp identity 33656 "Identity"
+  require_port_free 4000 "Api"
+  start_background api "${SCRIPT_DIR}/run-service.sh" \
+    "${STATE_DIR}/api.environment" \
+    "${REPO_ROOT}/src/Api/Api.csproj"
+  wait_for_owned_tcp api 4000 "Api"
 }
 
 health() {
@@ -290,40 +463,42 @@ health() {
 
 stop_one() {
   local name="$1"
-  local expected="$2"
   local pid_file="${PID_DIR}/${name}.pid"
   [[ -f "${pid_file}" ]] || return
-  local pid command_line
+  local pid
   pid="$(<"${pid_file}")"
-  command_line="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
-  if [[ -n "${command_line}" && "${command_line}" == *"${expected}"* ]]; then
+  if pid_is_running "${name}"; then
     kill "${pid}"
     echo "stopped ${name}"
+  elif [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" >/dev/null 2>&1; then
+    echo "refused to signal unexpected process from stale ${name} pid file" >&2
   fi
   rm -f "${pid_file}"
 }
 
 stop_services() {
-  stop_one api "src/Api/Api.csproj"
-  stop_one identity "src/Identity/Identity.csproj"
+  stop_one api
+  stop_one identity
 }
 
 prepare() {
-  verify_base
-  for command in docker dotnet pwsh node ngrok curl nc openssl; do
+  for command in docker dotnet git ps pwsh node ngrok curl nc openssl; do
     require_command "${command}"
   done
+  verify_base
+  verify_tracked_source_clean
   disk_guard 5
   write_docker_env
+  ensure_identity_certificate
   render_and_apply_secrets
-  if [[ ! -f "${REPO_ROOT}/src/Identity/bin/Debug/net10.0/Identity.dll" ||
-        ! -f "${REPO_ROOT}/src/Api/bin/Debug/net10.0/Api.dll" ||
-        ! -f "${REPO_ROOT}/util/MsSqlMigratorUtility/bin/Debug/net10.0/MsSqlMigratorUtility.dll" ]]; then
+  if ! build_outputs_are_current; then
+    rm -f "${BUILD_PROVENANCE}"
     disk_guard 6
     restore_projects
     build_projects
+    record_build_provenance
   else
-    echo "using existing exact-SHA Api and Identity builds"
+    echo "using commit-bound Api, Identity, and migrator builds"
   fi
   if ! dependencies_up; then
     compose --profile mssql --profile mail down || true
@@ -394,8 +569,8 @@ status() {
 
 stop_all() {
   stop_services
-  stop_one ngrok "ngrok http 127.0.0.1:8088"
-  stop_one gateway "gateway.mjs"
+  stop_one ngrok
+  stop_one gateway
   if [[ -f "${DOCKER_ENV}" ]]; then
     compose --profile mssql --profile mail down
   fi
