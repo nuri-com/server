@@ -50,7 +50,18 @@ Exception Page output or development stack traces.
 
 The controller never reads or writes the account-wide .NET user-secret store.
 Api and Identity consume only their controller-owned environment files, and the
-migrator reads the controller-owned ignored `dev/secrets.json` directly.
+migration wrapper reads the controller-owned ignored `dev/secrets.json` through
+a no-follow private-file descriptor. It passes the connection string to the
+migrator only through a process-scoped environment variable, never through
+process arguments.
+
+Every controller-owned secret file is checked with `lstat`, opened without
+following symlinks, forced to exact mode `0600`, and verified before reads.
+Writes use exclusive mode-`0600` temporary files plus an atomic same-directory
+rename. The same boundary covers `dev/.env`, `dev/secrets.json`, Api and Identity
+environment files, ownership/provenance markers, runtime logs and PID files, the
+public endpoint marker, and the Identity certificate. Controller runtime
+directories are regular non-symlink directories with exact mode `0700`.
 
 The controller never adopts pre-existing `dev/.env` or `dev/secrets.json`
 files: a state-directory ownership marker must match files it created. Its

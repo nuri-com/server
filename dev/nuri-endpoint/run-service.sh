@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly PRIVATE_FILES="${SCRIPT_DIR}/private-files.mjs"
 readonly ENVIRONMENT_FILE="${1:?missing environment file}"
 readonly PROJECT="${2:?missing project path}"
 
-[[ -f "${ENVIRONMENT_FILE}" ]] || {
+node "${PRIVATE_FILES}" secure-file "${ENVIRONMENT_FILE}" "service environment" || {
   echo "missing isolated service environment: ${ENVIRONMENT_FILE}" >&2
   exit 1
 }

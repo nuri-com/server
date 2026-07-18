@@ -22,7 +22,7 @@ function fixture() {
       "IDENTITY_CERTIFICATE_PASSWORD=Fixture_Aa1!certificate\n",
     { mode: 0o600 },
   );
-  return { repo, state };
+  return { root, repo, state };
 }
 
 function runRenderer({ repo, state }) {
@@ -109,4 +109,96 @@ test("rejects an installation.env symlink without revealing its contents", () =>
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /regular non-symlink file/u);
   assert.equal(result.stderr.includes(privateValue), false);
+});
+
+test("repairs relaxed modes before reading or replacing private files", () => {
+  const current = fixture();
+  const privateFiles = [
+    path.join(current.repo, "dev", ".env"),
+    path.join(current.state, "api.environment"),
+    path.join(current.state, "identity.environment"),
+    path.join(current.repo, "dev", "secrets.json"),
+    path.join(current.state, "owns-dev-secrets"),
+  ];
+  fs.writeFileSync(path.join(current.state, "api.environment"), "old", { mode: 0o644 });
+  fs.writeFileSync(path.join(current.state, "identity.environment"), "old", {
+    mode: 0o644,
+  });
+  fs.writeFileSync(path.join(current.repo, "dev", "secrets.json"), "{}\n", {
+    mode: 0o644,
+  });
+  fs.writeFileSync(
+    path.join(current.state, "owns-dev-secrets"),
+    "owned by dev/nuri-endpoint/control.sh\n",
+    { mode: 0o644 },
+  );
+  for (const file of privateFiles) fs.chmodSync(file, 0o644);
+
+  const result = runRenderer(current);
+  assert.equal(result.status, 0, result.stderr);
+  for (const file of privateFiles) assert.equal(mode(file), 0o600, file);
+});
+
+test("rejects prepared symlinks for every generated secret target", () => {
+  const cases = [
+    {
+      label: "api.environment",
+      output: ({ state }) => path.join(state, "api.environment"),
+    },
+    {
+      label: "identity.environment",
+      output: ({ state }) => path.join(state, "identity.environment"),
+    },
+    {
+      label: "dev/secrets.json",
+      output: ({ repo }) => path.join(repo, "dev", "secrets.json"),
+      prepare: ({ state }) =>
+        fs.writeFileSync(
+          path.join(state, "owns-dev-secrets"),
+          "owned by dev/nuri-endpoint/control.sh\n",
+          { mode: 0o600 },
+        ),
+    },
+  ];
+
+  for (const currentCase of cases) {
+    const current = fixture();
+    currentCase.prepare?.(current);
+    const privateValue = `private-${currentCase.label}`;
+    const target = path.join(current.root, `outside-${path.basename(currentCase.label)}`);
+    fs.writeFileSync(target, privateValue, { mode: 0o600 });
+    fs.symlinkSync(target, currentCase.output(current));
+
+    const result = runRenderer(current);
+    assert.notEqual(result.status, 0, currentCase.label);
+    assert.match(result.stderr, /regular non-symlink file/u, currentCase.label);
+    assert.equal(fs.readFileSync(target, "utf8"), privateValue, currentCase.label);
+    assert.equal(result.stderr.includes(privateValue), false, currentCase.label);
+  }
+});
+
+test("rejects symlinked private inputs before consuming them", () => {
+  for (const input of ["docker", "public-base", "ownership-marker"]) {
+    const current = fixture();
+    const privateValue = `private-${input}`;
+    const target = path.join(current.root, `outside-${input}`);
+    fs.writeFileSync(target, privateValue, { mode: 0o600 });
+
+    if (input === "docker") {
+      fs.rmSync(path.join(current.repo, "dev", ".env"));
+      fs.symlinkSync(target, path.join(current.repo, "dev", ".env"));
+    } else if (input === "public-base") {
+      fs.symlinkSync(target, path.join(current.state, "public-base-url"));
+    } else {
+      fs.writeFileSync(path.join(current.repo, "dev", "secrets.json"), "{}\n", {
+        mode: 0o600,
+      });
+      fs.symlinkSync(target, path.join(current.state, "owns-dev-secrets"));
+    }
+
+    const result = runRenderer(current);
+    assert.notEqual(result.status, 0, input);
+    assert.match(result.stderr, /regular non-symlink file/u, input);
+    assert.equal(result.stderr.includes(privateValue), false, input);
+  }
 });

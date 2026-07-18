@@ -11,6 +11,7 @@ readonly LOG_DIR="${STATE_DIR}/logs"
 readonly PID_DIR="${STATE_DIR}/pids"
 readonly COMPOSE_OVERRIDE="${SCRIPT_DIR}/docker-compose.override.yml"
 readonly COMPOSE_FILE="${REPO_ROOT}/dev/docker-compose.yml"
+readonly PRIVATE_FILES="${SCRIPT_DIR}/private-files.mjs"
 readonly DOCKER_ENV="${REPO_ROOT}/dev/.env"
 readonly DOCKER_ENV_MARKER="${STATE_DIR}/owns-dev-env"
 readonly BUILD_PROVENANCE="${STATE_DIR}/build-provenance"
@@ -29,10 +30,45 @@ if [[ -L "${STATE_DIR}" || ( -e "${STATE_DIR}" && ! -d "${STATE_DIR}" ) ]]; then
   echo "controller state must be a regular non-symlink directory: ${STATE_DIR}" >&2
   exit 1
 fi
-mkdir -p "${STATE_DIR}" "${DOTNET_HOME}" "${NUGET_PACKAGES_DIR}" "${LOG_DIR}" "${PID_DIR}"
-chmod 700 "${STATE_DIR}"
+mkdir -p "${STATE_DIR}"
+node "${PRIVATE_FILES}" secure-directory "${STATE_DIR}" "Controller state"
+for private_directory in "${DOTNET_HOME}" "${NUGET_PACKAGES_DIR}" "${LOG_DIR}" "${PID_DIR}"; do
+  if [[ -L "${private_directory}" || ( -e "${private_directory}" && ! -d "${private_directory}" ) ]]; then
+    echo "controller runtime directory must be a regular non-symlink directory: ${private_directory}" >&2
+    exit 1
+  fi
+  mkdir -p "${private_directory}"
+  node "${PRIVATE_FILES}" secure-directory "${private_directory}" "controller runtime directory"
+done
+
+path_exists_including_symlink() {
+  [[ -e "$1" || -L "$1" ]]
+}
+
+secure_private_file() {
+  node "${PRIVATE_FILES}" secure-file "$1" "$2"
+}
+
+read_private_file() {
+  node "${PRIVATE_FILES}" read "$1" "$2"
+}
+
+atomic_write_private_file() {
+  node "${PRIVATE_FILES}" write "$1" "$2"
+}
+
+verify_ownership_marker() {
+  local marker="$1"
+  local label="$2"
+  [[ "$(read_private_file "${marker}" "${label}")" == "owned by dev/nuri-endpoint/control.sh" ]] || {
+    echo "invalid ${label}" >&2
+    return 1
+  }
+}
 
 compose() {
+  verify_ownership_marker "${DOCKER_ENV_MARKER}" "dev/.env ownership marker"
+  secure_private_file "${DOCKER_ENV}" "dev/.env"
   docker compose \
     --project-name bitwardenserver_nuri76 \
     --env-file "${DOCKER_ENV}" \
@@ -83,37 +119,42 @@ current_build_provenance() {
 }
 
 build_outputs_are_current() {
-  [[ -f "${BUILD_PROVENANCE}" ]] || return 1
+  path_exists_including_symlink "${BUILD_PROVENANCE}" || return 1
   local recorded current
-  recorded="$(<"${BUILD_PROVENANCE}")"
+  recorded="$(read_private_file "${BUILD_PROVENANCE}" "build provenance")" || return 1
   current="$(current_build_provenance)" || return 1
   [[ "${recorded}" == "${current}" ]]
 }
 
 record_build_provenance() {
   verify_tracked_source_clean
-  local temporary_marker="${BUILD_PROVENANCE}.tmp.$$"
-  current_build_provenance >"${temporary_marker}"
-  chmod 600 "${temporary_marker}"
-  mv -f "${temporary_marker}" "${BUILD_PROVENANCE}"
+  current_build_provenance | atomic_write_private_file "${BUILD_PROVENANCE}" "build provenance"
 }
 
 write_docker_env() {
-  if [[ -f "${DOCKER_ENV}" ]]; then
-    [[ -f "${DOCKER_ENV_MARKER}" ]] || {
+  if path_exists_including_symlink "${DOCKER_ENV}"; then
+    path_exists_including_symlink "${DOCKER_ENV_MARKER}" || {
       echo "refusing to use existing unowned ${DOCKER_ENV}" >&2
       exit 1
     }
-    grep -qx 'COMPOSE_PROJECT_NAME=bitwardenserver_nuri76' "${DOCKER_ENV}" || {
+    verify_ownership_marker "${DOCKER_ENV_MARKER}" "dev/.env ownership marker"
+    local docker_environment
+    docker_environment="$(read_private_file "${DOCKER_ENV}" "dev/.env")"
+    grep -qx 'COMPOSE_PROJECT_NAME=bitwardenserver_nuri76' <<<"${docker_environment}" || {
       echo "owned ${DOCKER_ENV} has an unexpected Compose project" >&2
       exit 1
     }
-    if ! grep -q '^IDENTITY_CERTIFICATE_PASSWORD=' "${DOCKER_ENV}"; then
-      printf 'IDENTITY_CERTIFICATE_PASSWORD=Nuri76_Cert_Aa1!%s\n' \
-        "$(openssl rand -hex 16)" >>"${DOCKER_ENV}"
-      chmod 600 "${DOCKER_ENV}"
+    if ! grep -q '^IDENTITY_CERTIFICATE_PASSWORD=' <<<"${docker_environment}"; then
+      {
+        printf '%s\n' "${docker_environment}"
+        printf 'IDENTITY_CERTIFICATE_PASSWORD=Nuri76_Cert_Aa1!%s\n' \
+          "$(openssl rand -hex 16)"
+      } | atomic_write_private_file "${DOCKER_ENV}" "dev/.env"
     fi
     return
+  fi
+  if path_exists_including_symlink "${DOCKER_ENV_MARKER}"; then
+    verify_ownership_marker "${DOCKER_ENV_MARKER}" "dev/.env ownership marker"
   fi
 
   local password certificate_password
@@ -134,25 +175,21 @@ write_docker_env() {
     printf 'RABBITMQ_DEFAULT_USER=bitwarden\n'
     printf 'RABBITMQ_DEFAULT_PASS=%s\n' "${password}"
     printf 'IDENTITY_CERTIFICATE_PASSWORD=%s\n' "${certificate_password}"
-  } >"${DOCKER_ENV}"
-  chmod 600 "${DOCKER_ENV}"
-  printf 'owned by dev/nuri-endpoint/control.sh\n' >"${DOCKER_ENV_MARKER}"
-  chmod 600 "${DOCKER_ENV_MARKER}"
+  } | atomic_write_private_file "${DOCKER_ENV}" "dev/.env"
+  printf 'owned by dev/nuri-endpoint/control.sh\n' |
+    atomic_write_private_file "${DOCKER_ENV_MARKER}" "dev/.env ownership marker"
   echo "created ignored dev/.env"
 }
 
 ensure_identity_certificate() {
   local certificate_password
-  certificate_password="$(node -e '
-    const fs = require("fs");
-    const line = fs.readFileSync(process.argv[1], "utf8")
-      .split(/\r?\n/u)
-      .find(item => item.startsWith("IDENTITY_CERTIFICATE_PASSWORD="));
-    if (!line) process.exit(1);
-    process.stdout.write(line.slice(line.indexOf("=") + 1));
-  ' "${DOCKER_ENV}")"
+  certificate_password="$(
+    node "${PRIVATE_FILES}" read-env "${DOCKER_ENV}" \
+      IDENTITY_CERTIFICATE_PASSWORD "dev/.env"
+  )"
 
-  if [[ -f "${IDENTITY_CERTIFICATE}" ]]; then
+  if path_exists_including_symlink "${IDENTITY_CERTIFICATE}"; then
+    secure_private_file "${IDENTITY_CERTIFICATE}" "Identity certificate"
     if NURI_IDENTITY_CERT_PASSWORD="${certificate_password}" \
       openssl pkcs12 -in "${IDENTITY_CERTIFICATE}" -passin env:NURI_IDENTITY_CERT_PASSWORD \
         -noout >/dev/null 2>&1; then
@@ -162,9 +199,11 @@ ensure_identity_certificate() {
     exit 1
   fi
 
-  local temporary_key="${STATE_DIR}/identity-server.key.tmp.$$"
-  local temporary_certificate="${STATE_DIR}/identity-server.crt.tmp.$$"
-  local temporary_bundle="${STATE_DIR}/identity-server.pfx.tmp.$$"
+  local temporary_key temporary_certificate temporary_bundle
+  temporary_key="$(mktemp "${STATE_DIR}/identity-server.key.tmp.XXXXXX")"
+  temporary_certificate="$(mktemp "${STATE_DIR}/identity-server.crt.tmp.XXXXXX")"
+  temporary_bundle="$(mktemp "${STATE_DIR}/identity-server.pfx.tmp.XXXXXX")"
+  chmod 600 "${temporary_key}" "${temporary_certificate}" "${temporary_bundle}"
   if ! NURI_IDENTITY_CERT_PASSWORD="${certificate_password}" \
     openssl req -x509 -newkey rsa:2048 -sha256 \
       -keyout "${temporary_key}" -out "${temporary_certificate}" \
@@ -185,6 +224,7 @@ ensure_identity_certificate() {
   fi
   chmod 600 "${temporary_bundle}"
   mv -f "${temporary_bundle}" "${IDENTITY_CERTIFICATE}"
+  secure_private_file "${IDENTITY_CERTIFICATE}" "Identity certificate"
   rm -f "${temporary_key}" "${temporary_certificate}"
   echo "created isolated non-Development Identity certificate"
 }
@@ -270,9 +310,9 @@ expected_command_for() {
 pid_is_running() {
   local name="$1"
   local pid_file="${PID_DIR}/${name}.pid"
-  [[ -f "${pid_file}" ]] || return 1
+  path_exists_including_symlink "${pid_file}" || return 1
   local pid expected command_line
-  pid="$(<"${pid_file}")"
+  pid="$(read_private_file "${pid_file}" "${name} pid file")" || return 1
   [[ "${pid}" =~ ^[0-9]+$ ]] && (( pid > 1 )) || return 1
   kill -0 "${pid}" >/dev/null 2>&1 || return 1
   expected="$(expected_command_for "${name}")" || return 1
@@ -283,7 +323,7 @@ pid_is_running() {
 clear_stale_pid_file() {
   local name="$1"
   local pid_file="${PID_DIR}/${name}.pid"
-  if [[ -f "${pid_file}" ]] && ! pid_is_running "${name}"; then
+  if path_exists_including_symlink "${pid_file}" && ! pid_is_running "${name}"; then
     rm -f "${pid_file}"
     echo "cleared stale ${name} pid file"
   fi
@@ -297,8 +337,15 @@ start_background() {
     return 1
   fi
   clear_stale_pid_file "${name}"
-  nohup "$@" >"${LOG_DIR}/${name}.log" 2>&1 &
-  echo "$!" >"${PID_DIR}/${name}.pid"
+  local log_file="${LOG_DIR}/${name}.log"
+  : | atomic_write_private_file "${log_file}" "${name} log"
+  nohup "$@" >"${log_file}" 2>&1 &
+  local started_pid="$!"
+  if ! printf '%s\n' "${started_pid}" |
+    atomic_write_private_file "${PID_DIR}/${name}.pid" "${name} pid file"; then
+    kill "${started_pid}" >/dev/null 2>&1 || true
+    return 1
+  fi
   echo "started ${name}"
 }
 
@@ -357,6 +404,7 @@ start_gateway() {
 
 start_ngrok() {
   require_port_free 4040 "ngrok inspection API"
+  : | atomic_write_private_file "${LOG_DIR}/ngrok-agent.log" "ngrok agent log"
   start_background ngrok ngrok http 127.0.0.1:8088 \
     --name nuri-bitwarden-76 \
     --description "Nuri Bitwarden physical-device proof" \
@@ -384,8 +432,8 @@ start_ngrok() {
       });
     ' || true)"
     if [[ "${public_base}" == https://* ]]; then
-      printf '%s\n' "${public_base%/}" >"${STATE_DIR}/public-base-url"
-      chmod 600 "${STATE_DIR}/public-base-url"
+      printf '%s\n' "${public_base%/}" |
+        atomic_write_private_file "${STATE_DIR}/public-base-url" "public-base-url"
       echo "pinned public base: ${public_base%/}"
       return
     fi
@@ -411,7 +459,7 @@ start_services() {
 
 health() {
   local public_base
-  public_base="$(<"${STATE_DIR}/public-base-url")"
+  public_base="$(read_private_file "${STATE_DIR}/public-base-url" "public-base-url")"
   curl -fsS "${public_base}/healthz" >/dev/null
   curl -fsS "${public_base}/api/alive" >/dev/null
   curl -fsS "${public_base}/identity/.well-known/openid-configuration" |
@@ -446,9 +494,9 @@ health() {
 stop_one() {
   local name="$1"
   local pid_file="${PID_DIR}/${name}.pid"
-  [[ -f "${pid_file}" ]] || return
+  path_exists_including_symlink "${pid_file}" || return 0
   local pid
-  pid="$(<"${pid_file}")"
+  pid="$(read_private_file "${pid_file}" "${name} pid file")" || return
   if pid_is_running "${name}"; then
     kill "${pid}"
     echo "stopped ${name}"
@@ -464,7 +512,7 @@ stop_services() {
 }
 
 prepare() {
-  for command in docker dotnet git ps pwsh node ngrok curl nc openssl; do
+  for command in docker dotnet git ps pwsh node ngrok curl nc openssl mktemp; do
     require_command "${command}"
   done
   verify_base
@@ -539,8 +587,8 @@ status() {
       echo "${name}: stopped"
     fi
   done
-  if [[ -f "${STATE_DIR}/public-base-url" ]]; then
-    echo "public base: $(<"${STATE_DIR}/public-base-url")"
+  if path_exists_including_symlink "${STATE_DIR}/public-base-url"; then
+    echo "public base: $(read_private_file "${STATE_DIR}/public-base-url" "public-base-url")"
   fi
   if [[ -f "${STATE_DIR}/installation.env" ]]; then
     echo "installation credentials: configured locally"

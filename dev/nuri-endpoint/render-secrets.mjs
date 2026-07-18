@@ -1,5 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  atomicWritePrivateFile,
+  pathExistsIncludingSymlink,
+  readPrivateFile,
+  securePrivateDirectory,
+} from "./private-files.mjs";
 
 const repoRoot = path.resolve(process.argv[2] ?? ".");
 if (!process.argv[3]) throw new Error("Controller state directory is required");
@@ -11,44 +17,13 @@ const dockerEnvFile = path.join(repoRoot, "dev", ".env");
 const outputFile = path.join(repoRoot, "dev", "secrets.json");
 const apiEnvironmentFile = path.join(stateDir, "api.environment");
 const identityEnvironmentFile = path.join(stateDir, "identity.environment");
+const ownershipText = "owned by dev/nuri-endpoint/control.sh\n";
 
-function securePrivateDirectory(directory) {
-  const current = fs.lstatSync(directory);
-  if (current.isSymbolicLink() || !current.isDirectory()) {
-    throw new Error("Controller state must be a regular non-symlink directory");
-  }
-  fs.chmodSync(directory, 0o700);
-  if ((fs.lstatSync(directory).mode & 0o777) !== 0o700) {
-    throw new Error("Controller state directory permissions must be 0700");
-  }
-}
+securePrivateDirectory(stateDir, "Controller state");
 
-function securePrivateFile(file, label) {
-  const current = fs.lstatSync(file);
-  if (current.isSymbolicLink() || !current.isFile()) {
-    throw new Error(`${label} must be a regular non-symlink file`);
-  }
-  fs.chmodSync(file, 0o600);
-  if ((fs.lstatSync(file).mode & 0o777) !== 0o600) {
-    throw new Error(`${label} permissions must be 0600`);
-  }
-}
-
-function pathExistsIncludingSymlink(file) {
-  try {
-    fs.lstatSync(file);
-    return true;
-  } catch (error) {
-    if (error?.code === "ENOENT") return false;
-    throw error;
-  }
-}
-
-securePrivateDirectory(stateDir);
-
-function parseEnv(file) {
+function parseEnv(file, label) {
   const values = {};
-  for (const rawLine of fs.readFileSync(file, "utf8").split(/\r?\n/u)) {
+  for (const rawLine of readPrivateFile(file, label, "utf8").split(/\r?\n/u)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
     const separator = line.indexOf("=");
@@ -58,15 +33,17 @@ function parseEnv(file) {
   return values;
 }
 
-const dockerEnv = parseEnv(dockerEnvFile);
+const dockerEnv = parseEnv(dockerEnvFile, "dev/.env");
 if (!dockerEnv.MSSQL_PASSWORD) throw new Error("MSSQL_PASSWORD is missing");
 if (!dockerEnv.IDENTITY_CERTIFICATE_PASSWORD) {
   throw new Error("IDENTITY_CERTIFICATE_PASSWORD is missing");
 }
 
 let publicBase = "http://127.0.0.1:8088";
-if (fs.existsSync(publicBaseFile)) {
-  publicBase = fs.readFileSync(publicBaseFile, "utf8").trim().replace(/\/$/u, "");
+if (pathExistsIncludingSymlink(publicBaseFile)) {
+  publicBase = readPrivateFile(publicBaseFile, "public-base-url", "utf8")
+    .trim()
+    .replace(/\/$/u, "");
 }
 const parsedBase = new URL(publicBase);
 if (parsedBase.protocol !== "https:" && parsedBase.hostname !== "127.0.0.1") {
@@ -79,8 +56,7 @@ let installationId = "00000000-0000-4000-8000-000000000076";
 let installationKey = "LOCAL_PREPARE_ONLY";
 let installationConfigured = false;
 if (pathExistsIncludingSymlink(installationFile)) {
-  securePrivateFile(installationFile, "installation.env");
-  const installation = parseEnv(installationFile);
+  const installation = parseEnv(installationFile, "installation.env");
   installationId = installation.BITWARDEN_INSTALLATION_ID ?? "";
   installationKey = installation.BITWARDEN_INSTALLATION_KEY ?? "";
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(installationId)) {
@@ -96,6 +72,8 @@ const dataProtectionDirectory = path.join(stateDir, "data-protection");
 const licenseDirectory = path.join(stateDir, "licenses");
 fs.mkdirSync(dataProtectionDirectory, { recursive: true, mode: 0o700 });
 fs.mkdirSync(licenseDirectory, { recursive: true, mode: 0o700 });
+securePrivateDirectory(dataProtectionDirectory, "data-protection directory");
+securePrivateDirectory(licenseDirectory, "license directory");
 
 const config = {
   globalSettings: {
@@ -156,8 +134,7 @@ function writeServiceEnvironment(file, serviceConfig, port) {
     ...flattenEnvironment(serviceConfig),
   ];
   const serialized = entries.map(([key, value]) => `${key}=${value}\0`).join("");
-  fs.writeFileSync(file, serialized, { mode: 0o600 });
-  fs.chmodSync(file, 0o600);
+  atomicWritePrivateFile(file, serialized, path.basename(file));
 }
 
 const identityConfig = JSON.parse(JSON.stringify(config));
@@ -166,17 +143,22 @@ identityConfig.globalSettings.baseServiceUri.internalIdentity = publicBase;
 writeServiceEnvironment(apiEnvironmentFile, config, 4000);
 writeServiceEnvironment(identityEnvironmentFile, identityConfig, 33656);
 
-if (fs.existsSync(outputFile) && !fs.existsSync(ownershipMarker)) {
-  throw new Error(
-    `Refusing to overwrite existing ${outputFile}; move it aside or explicitly mark it as controller-owned`,
-  );
+if (pathExistsIncludingSymlink(outputFile)) {
+  if (!pathExistsIncludingSymlink(ownershipMarker)) {
+    throw new Error(
+      `Refusing to overwrite existing ${outputFile}; move it aside or explicitly mark it as controller-owned`,
+    );
+  }
+  if (readPrivateFile(ownershipMarker, "dev/secrets.json ownership marker", "utf8") !== ownershipText) {
+    throw new Error("Refusing to overwrite dev/secrets.json with an invalid ownership marker");
+  }
 }
-fs.writeFileSync(outputFile, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-fs.chmodSync(outputFile, 0o600);
-fs.writeFileSync(ownershipMarker, "owned by dev/nuri-endpoint/control.sh\n", {
-  mode: 0o600,
-});
-fs.chmodSync(ownershipMarker, 0o600);
+atomicWritePrivateFile(
+  outputFile,
+  `${JSON.stringify(config, null, 2)}\n`,
+  "dev/secrets.json",
+);
+atomicWritePrivateFile(ownershipMarker, ownershipText, "dev/secrets.json ownership marker");
 console.log(
   JSON.stringify({
     ok: true,

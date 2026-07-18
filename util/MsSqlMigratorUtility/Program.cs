@@ -3,6 +3,8 @@ using CommandDotNet;
 
 internal class Program
 {
+    private const string ConnectionStringEnvironmentVariable = "BITWARDEN_MSSQL_MIGRATOR_CONNECTION_STRING";
+
     private static int Main(string[] args)
     {
         return new AppRunner<Program>().Run(args);
@@ -11,7 +13,7 @@ internal class Program
     [DefaultCommand]
     public int Execute(
         [Operand(Description = "Database connection string")]
-        string databaseConnectionString,
+        string? databaseConnectionString = null,
         [Option('r', "repeatable", Description = "Mark scripts as repeatable")]
         bool repeatable = false,
         [Option('f', "folder", Description = "Folder name of database scripts")]
@@ -22,6 +24,14 @@ internal class Program
         bool noTransactionMigration = false
         )
     {
+        databaseConnectionString ??= Environment.GetEnvironmentVariable(ConnectionStringEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(databaseConnectionString))
+        {
+            throw new ArgumentException(
+                $"Provide the database connection string as an operand or through {ConnectionStringEnvironmentVariable}.",
+                nameof(databaseConnectionString));
+        }
+
         return MigrateDatabase(databaseConnectionString, repeatable, folderName, dryRun, noTransactionMigration) ? 0 : -1;
     }
 
