@@ -26,8 +26,8 @@ build. Existing binaries are reused only when that provenance still matches.
 
 ## Run
 
-Use an external ignored state directory so credentials and build caches never
-enter Git:
+Use a dedicated external ignored state directory so credentials and build
+caches never enter Git. The controller enforces mode `0700` on this directory:
 
 ```sh
 export NURI_ENDPOINT_STATE_DIR=/Users/eminmahrt/Developer/nuri-bitwarden/local/76-reachable-endpoint
@@ -48,6 +48,10 @@ Identity certificate and injects configuration through mode-`0600` external
 environment files, so the public test endpoint does not expose Developer
 Exception Page output or development stack traces.
 
+The controller never reads or writes the account-wide .NET user-secret store.
+Api and Identity consume only their controller-owned environment files, and the
+migrator reads the controller-owned ignored `dev/secrets.json` directly.
+
 The controller never adopts pre-existing `dev/.env` or `dev/secrets.json`
 files: a state-directory ownership marker must match files it created. Its
 Compose project name is also fixed, so `stop` cannot target an unrelated local
@@ -63,10 +67,10 @@ pre-login handshake or migration cannot be reported as successful preparation.
 Package locks include the current `Data` project edge and restores run in locked
 mode, preventing endpoint startup from silently rewriting dependency state.
 
-The gateway contract can be checked without Docker or .NET:
+The gateway and secret-boundary contracts can be checked without Docker or .NET:
 
 ```sh
-node --test dev/nuri-endpoint/gateway.test.mjs
+node --test dev/nuri-endpoint/*.test.mjs
 ```
 
 The first run deliberately uses a non-secret local placeholder for the hosting
@@ -84,10 +88,12 @@ run:
 dev/nuri-endpoint/control.sh configure
 ```
 
-The populated file is outside Git. The controller validates it, writes only to
-ignored files and the isolated .NET user-secret store, and never prints either
-value. Stop a running endpoint before configuring it, then run `start` again;
-`configure` never leaves detached services behind.
+The populated file is outside Git. Before reading it, the controller rejects
+symlinks, requires a regular file, forces exact mode `0600`, validates both
+values, and never prints either value. It writes only controller-owned ignored
+files; global .NET user secrets remain untouched. Stop a running endpoint before
+configuring it, then run `start` again; `configure` never leaves detached
+services behind.
 
 The controller refuses preparation below 5 GiB of free disk. A clean first
 build or missing container images require at least 6 GiB. This guard protects

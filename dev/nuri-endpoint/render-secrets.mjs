@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(process.argv[2] ?? ".");
-const stateDir = path.resolve(process.argv[3] ?? "");
+if (!process.argv[3]) throw new Error("Controller state directory is required");
+const stateDir = path.resolve(process.argv[3]);
 const publicBaseFile = path.join(stateDir, "public-base-url");
 const installationFile = path.join(stateDir, "installation.env");
 const ownershipMarker = path.join(stateDir, "owns-dev-secrets");
@@ -10,6 +11,40 @@ const dockerEnvFile = path.join(repoRoot, "dev", ".env");
 const outputFile = path.join(repoRoot, "dev", "secrets.json");
 const apiEnvironmentFile = path.join(stateDir, "api.environment");
 const identityEnvironmentFile = path.join(stateDir, "identity.environment");
+
+function securePrivateDirectory(directory) {
+  const current = fs.lstatSync(directory);
+  if (current.isSymbolicLink() || !current.isDirectory()) {
+    throw new Error("Controller state must be a regular non-symlink directory");
+  }
+  fs.chmodSync(directory, 0o700);
+  if ((fs.lstatSync(directory).mode & 0o777) !== 0o700) {
+    throw new Error("Controller state directory permissions must be 0700");
+  }
+}
+
+function securePrivateFile(file, label) {
+  const current = fs.lstatSync(file);
+  if (current.isSymbolicLink() || !current.isFile()) {
+    throw new Error(`${label} must be a regular non-symlink file`);
+  }
+  fs.chmodSync(file, 0o600);
+  if ((fs.lstatSync(file).mode & 0o777) !== 0o600) {
+    throw new Error(`${label} permissions must be 0600`);
+  }
+}
+
+function pathExistsIncludingSymlink(file) {
+  try {
+    fs.lstatSync(file);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+securePrivateDirectory(stateDir);
 
 function parseEnv(file) {
   const values = {};
@@ -43,7 +78,8 @@ if (parsedBase.protocol !== "https:" && parsedBase.hostname !== "127.0.0.1") {
 let installationId = "00000000-0000-4000-8000-000000000076";
 let installationKey = "LOCAL_PREPARE_ONLY";
 let installationConfigured = false;
-if (fs.existsSync(installationFile)) {
+if (pathExistsIncludingSymlink(installationFile)) {
+  securePrivateFile(installationFile, "installation.env");
   const installation = parseEnv(installationFile);
   installationId = installation.BITWARDEN_INSTALLATION_ID ?? "";
   installationKey = installation.BITWARDEN_INSTALLATION_KEY ?? "";

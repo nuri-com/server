@@ -25,7 +25,12 @@ export DOTNET_NOLOGO=1
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 
 umask 077
+if [[ -L "${STATE_DIR}" || ( -e "${STATE_DIR}" && ! -d "${STATE_DIR}" ) ]]; then
+  echo "controller state must be a regular non-symlink directory: ${STATE_DIR}" >&2
+  exit 1
+fi
 mkdir -p "${STATE_DIR}" "${DOTNET_HOME}" "${NUGET_PACKAGES_DIR}" "${LOG_DIR}" "${PID_DIR}"
+chmod 700 "${STATE_DIR}"
 
 compose() {
   docker compose \
@@ -184,32 +189,9 @@ ensure_identity_certificate() {
   echo "created isolated non-Development Identity certificate"
 }
 
-render_and_apply_secrets() {
+render_runtime_config() {
   node "${SCRIPT_DIR}/render-secrets.mjs" "${REPO_ROOT}" "${STATE_DIR}"
-
-  dotnet user-secrets set --project "${REPO_ROOT}/src/Api" \
-    <"${REPO_ROOT}/dev/secrets.json" >/dev/null
-  dotnet user-secrets set --project "${REPO_ROOT}/src/Identity" \
-    <"${REPO_ROOT}/dev/secrets.json" >/dev/null
-
-  local public_base
-  public_base="$(node -e 'const fs=require("fs"); const p=process.argv[1]; console.log(fs.existsSync(p) ? fs.readFileSync(p,"utf8").trim() : "http://127.0.0.1:8088")' "${STATE_DIR}/public-base-url")"
-  dotnet user-secrets set \
-    "globalSettings:baseServiceUri:internalIdentity" \
-    "http://127.0.0.1:33656/identity" \
-    --project "${REPO_ROOT}/src/Api" >/dev/null
-  # Identity's self-hosted PathBase already contributes /identity. Giving its
-  # discovery rewriter the public root prevents a duplicated /identity path;
-  # Api and clients still receive the public /identity service URL above.
-  dotnet user-secrets set \
-    "globalSettings:baseServiceUri:identity" \
-    "${public_base}" \
-    --project "${REPO_ROOT}/src/Identity" >/dev/null
-  dotnet user-secrets set \
-    "globalSettings:baseServiceUri:internalIdentity" \
-    "${public_base}" \
-    --project "${REPO_ROOT}/src/Identity" >/dev/null
-  echo "applied secret-safe Api and Identity user-secret state"
+  echo "applied isolated Api, Identity, and migrator configuration"
 }
 
 restore_projects() {
@@ -271,7 +253,7 @@ dependencies_up() {
 }
 
 migrate_database() {
-  pwsh "${SCRIPT_DIR}/migrate.ps1" "${REPO_ROOT}"
+  pwsh "${SCRIPT_DIR}/migrate.ps1" "${REPO_ROOT}" "${STATE_DIR}"
 }
 
 expected_command_for() {
@@ -490,7 +472,7 @@ prepare() {
   disk_guard 5
   write_docker_env
   ensure_identity_certificate
-  render_and_apply_secrets
+  render_runtime_config
   if ! build_outputs_are_current; then
     rm -f "${BUILD_PROVENANCE}"
     disk_guard 6
@@ -517,7 +499,7 @@ start_all() {
   prepare
   start_gateway
   start_ngrok
-  render_and_apply_secrets
+  render_runtime_config
   start_services
   health
   if [[ ! -f "${STATE_DIR}/installation.env" ]]; then
@@ -544,7 +526,7 @@ configure_installation() {
     echo "stop the running endpoint before applying installation credentials" >&2
     exit 1
   fi
-  render_and_apply_secrets
+  render_runtime_config
   echo "installation credentials applied without printing them; run start to launch the endpoint"
 }
 
