@@ -147,6 +147,8 @@ public class EncryptedFido2CredentialDto
     public required string UserName { get; set; }
     [JsonPropertyName("userDisplayName")]
     public required string UserDisplayName { get; set; }
+    [JsonPropertyName("extensionState")]
+    public string? ExtensionState { get; set; }
 }
 
 public class EncryptedFieldDto

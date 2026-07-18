@@ -308,4 +308,37 @@ public class CipherResponseModelTests
         Assert.Null(response.Fields);
         Assert.Null(response.PasswordHistory);
     }
+
+    [Fact]
+    public void Constructor_Login_PreservesFido2ExtensionState()
+    {
+        const string extensionState = "2.extension-state|encrypted";
+        var loginData = new CipherLoginData
+        {
+            Name = "2.name|encrypted",
+            Fido2Credentials =
+            [
+                new CipherLoginFido2CredentialData
+                {
+                    CredentialId = "2.credential-id|encrypted",
+                    CreationDate = DateTime.UtcNow,
+                    ExtensionState = extensionState,
+                }
+            ]
+        };
+        var cipher = new Cipher
+        {
+            Id = Guid.NewGuid(),
+            Type = CipherType.Login,
+            Data = JsonSerializer.Serialize(loginData),
+            RevisionDate = DateTime.UtcNow,
+            CreationDate = DateTime.UtcNow,
+        };
+
+        var response = new CipherMiniResponseModel(cipher, _globalSettings, false);
+
+        Assert.NotNull(response.Login?.Fido2Credentials);
+        Assert.Single(response.Login.Fido2Credentials);
+        Assert.Equal(extensionState, response.Login.Fido2Credentials[0].ExtensionState);
+    }
 }

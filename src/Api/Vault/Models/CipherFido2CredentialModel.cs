@@ -26,6 +26,7 @@ public class CipherFido2CredentialModel
         Counter = data.Counter;
         Discoverable = data.Discoverable;
         CreationDate = data.CreationDate;
+        ExtensionState = data.ExtensionState;
     }
 
     [EncryptedString]
@@ -66,6 +67,9 @@ public class CipherFido2CredentialModel
     public string Discoverable { get; set; }
     [Required]
     public DateTime CreationDate { get; set; }
+    [EncryptedString]
+    [EncryptedStringLength(10000)]
+    public string ExtensionState { get; set; }
 
     public CipherLoginFido2CredentialData ToCipherLoginFido2CredentialData()
     {
@@ -83,7 +87,8 @@ public class CipherFido2CredentialModel
             UserDisplayName = UserDisplayName,
             Counter = Counter,
             Discoverable = Discoverable,
-            CreationDate = CreationDate
+            CreationDate = CreationDate,
+            ExtensionState = ExtensionState
         };
     }
 }
